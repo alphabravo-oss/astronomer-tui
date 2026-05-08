@@ -1,0 +1,27 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+*.prof
+coverage.txt
+coverage.html
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lisa interview state (local working files)
+.claude/lisa-*.md
+.claude/lisa-draft.md

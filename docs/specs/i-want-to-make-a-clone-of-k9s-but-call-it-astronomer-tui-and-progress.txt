@@ -1,0 +1,82 @@
+astrotui — Implementation Progress
+Spec: docs/specs/i-want-to-make-a-clone-of-k9s-but-call-it-astronomer-tui-and.md
+Started: 2026-05-08
+
+Phase 1 — Foundation (US-1, US-2, US-3, US-4) [PENDING]
+  US-1  Project scaffolding & module bootstrap                      [PENDING]
+  US-2  Kubeconfig loading + auth providers                         [PENDING]
+  US-3  Resource discovery + watch infrastructure                   [PENDING]
+  US-4  Generic resource list view (table widget)                   [PENDING]
+  Verify: make build && make test && make lint && go run ./cmd/astrotui --context kind-kind
+
+Phase 2 — Resource breadth (US-5..US-11) [PENDING]
+  US-5  Core renderers (pods/deploys/svcs/cm/secrets/ns/nodes/events) [PENDING]
+  US-6  Workload renderers (sts/ds/job/cronjob/rs/hpa/pdb)          [PENDING]
+  US-7  Networking renderers (ingress/endpointslice/networkpolicy)  [PENDING]
+  US-8  Storage renderers (pv/pvc/sc/volumeattachment)              [PENDING]
+  US-9  RBAC renderers                                              [PENDING]
+  US-10 Cluster renderers (nodes-ext, events-ext, apiservices, leases) [PENDING]
+  US-11 Dynamic CRD view                                            [PENDING]
+  Verify: make test ./internal/ui/views/...
+
+Phase 3 — Write actions + safety guard (US-12..US-19) [PENDING]
+  US-12 Prod-context guard primitive                                [PENDING]
+  US-13 Edit via $EDITOR                                            [PENDING]
+  US-14 Delete with guard                                           [PENDING]
+  US-15 Scale workload                                              [PENDING]
+  US-16 Restart workload                                            [PENDING]
+  US-17 Exec into pod                                               [PENDING]
+  US-18 Port-forward                                                [PENDING]
+  US-19 Port-forward manager view                                   [PENDING]
+  Verify: make e2e-actions
+
+Phase 4 — Logs deluxe (US-20..US-23) [PENDING]
+  US-20 Single-pod log view                                         [PENDING]
+  US-21 Multi-pod merged stream                                     [PENDING]
+  US-22 Structured-log parsing + regex search                       [PENDING]
+  US-23 Jump-to-source + AI summarize button                        [PENDING]
+  Verify: make e2e-logs
+
+Phase 5 — Command palette + discoverability (US-24..US-29) [PENDING]
+  US-24 Palette infrastructure                                      [PENDING]
+  US-25 Resource indexer                                            [PENDING]
+  US-26 Action indexer                                              [PENDING]
+  US-27 Context / namespace indexer                                 [PENDING]
+  US-28 Plugin indexer                                              [PENDING]
+  US-29 Live keybind overlay (?)                                    [PENDING]
+  Verify: make bench-palette && make test ./internal/ui/palette/...
+
+Phase 6 — Plugins, sessions, theming (US-30..US-33) [PENDING]
+  US-30 k9s plugins.yaml drop-in loader                             [PENDING]
+  US-31 Native astrotui plugin schema                               [PENDING]
+  US-32 Session restore                                             [PENDING]
+  US-33 Theme/skin engine                                           [PENDING]
+  Verify: make test ./internal/plugins/... ./internal/session/... ./internal/ui/theme/...
+
+Phase 7 — AI module (US-34..US-38) [PENDING]
+  US-34 LLMProvider interface + multi-provider config               [PENDING]
+  US-35 AI: explain failure                                         [PENDING]
+  US-36 AI: summarize / Q&A logs                                    [PENDING]
+  US-37 AI: explain / lint manifest                                 [PENDING]
+  US-38 AI: NL-to-action in palette                                 [PENDING]
+  Verify: make test ./internal/ai/...    (opt-in: make test-llm-real)
+
+Phase 8 — Config, distribution, hardening (US-39..US-43) [PENDING]
+  US-39 Config loader + schema validation                           [PENDING]
+  US-40 astrotui config import-k9s                                  [PENDING]
+  US-41 Build & release pipeline (GoReleaser)                       [PENDING]
+  US-42 Container image                                             [PENDING]
+  US-43 Performance harness + NFR enforcement                       [PENDING]
+  Verify: make perf && goreleaser release --snapshot --clean
+
+NFR enforcement (verified each phase, gated in Phase 8 perf harness):
+  NFR-1  Cold start <=300ms on 1k-pod cluster                       [PENDING]
+  NFR-2  Render latency targets                                     [PENDING]
+  NFR-3  Idle CPU <=2%                                              [PENDING]
+  NFR-4  RSS <=150MB                                                [PENDING]
+  NFR-5  Binary <=30MB                                              [PENDING]
+  NFR-6  Static kubeconfig + exec auth                              [PENDING]
+  NFR-7  Zero telemetry                                             [PENDING]
+  NFR-8  Test coverage targets                                      [PENDING]
+  NFR-9  Signing + non-root container                               [PENDING]
+  NFR-10 Panic recovery                                             [PENDING]
