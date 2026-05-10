@@ -65,6 +65,8 @@ func TestDockerfileRunsAsNonRoot(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"FROM gcr.io/distroless/static-debian12:nonroot",
+		`LABEL org.opencontainers.image.source="https://github.com/alphabravo-oss/astronomer-tui"`,
+		`LABEL org.opencontainers.image.licenses="MIT"`,
 		"USER nonroot:nonroot",
 		`ENTRYPOINT ["/usr/local/bin/astrotui"]`,
 	} {
