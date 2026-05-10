@@ -2,7 +2,7 @@
 
 Objective: read `docs/specs` and build the `astrotui` product out fully as the Kubernetes TUI described in `docs/specs/i-want-to-make-a-clone-of-k9s-but-call-it-astronomer-tui-and.md`.
 
-Audit date: 2026-05-09.
+Audit date: 2026-05-10.
 
 ## Success Criteria
 
@@ -45,13 +45,13 @@ Audit date: 2026-05-09.
 | AI explain failure/logs/manifest/NL action | `internal/ai/features.go`, `internal/ui/app.go`; UI/AI tests | Done |
 | Config strict schema and import-k9s | `internal/config`; `docs/config.md`; config tests | Done |
 | GoReleaser binary targets and checksums | `.goreleaser.yml`; `make release-snapshot` produced four archives and checksums | Done |
-| Cosign signing config and release workflow | `.goreleaser.yml`, `.github/workflows/release.yml`, distribution tests | Pipeline present; real tag push still external |
+| Cosign signing config and release workflow | `.goreleaser.yml`, `.github/workflows/release.yml`, distribution tests; `v0.1.0-rc.5` release checksums verified with cosign keyless certificate | Done |
 | Install script artifact contract | `install.sh`; README; distribution tests | Done |
-| Multi-arch container config | `.goreleaser.yml`, `Dockerfile`, release workflow; local GoReleaser Docker snapshot built amd64/arm64 images; distribution tests | Build done; real GHCR publish still external |
+| Multi-arch container config | `.goreleaser.yml`, `Dockerfile`, release workflow; `v0.1.0-rc.5` release log published amd64/arm64 images and manifest `sha256:f11f896d87d72516c62d692f2e2ea4d9dcf7d13813742aa2dbdaaae3ecdba203` | Done |
 | Non-root container | `Dockerfile`; local Docker evidence in progress tracker; distribution tests | Done |
 | Perf harness | `test/kind/perf_test.go`; `make perf` passed | Done |
 | Live 1,000-pod kind render budget | `test/kind/e2e_test.go`; live kind tests enforce process-to-render <300ms and cache-to-render <100ms after informer sync | Done |
-| Process-level idle CPU/RSS | `make nfr-live`; 5-minute live kind run passed with idle CPU <=2% and RSS <=150MiB | Done |
+| Process-level idle CPU/RSS | `make nfr-live`; 5-minute live kind run passed with idle CPU <=2% and RSS <=150MiB locally and in GitHub Actions | Done |
 | Kind e2e harness | `test/kind/e2e_test.go`; `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind make e2e` passed against a live kind cluster | Done |
 | Coverage NFR | `make coverage-nfr` passed: cluster/actions/logs all above 70% | Done |
 | Zero telemetry dependency scan | distribution test scans common telemetry dependency markers | Done |
@@ -68,15 +68,25 @@ Audit date: 2026-05-09.
 - `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind go test -tags=e2e ./test/kind/... -run TestKindPerformanceGoldenPath -count=1 -timeout=3m`
 - `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind ASTROTUI_E2E_PROCESS_IDLE=5m go test -tags=e2e ./test/kind/... -run TestHeadlessRenderProcessGoldenPath -count=1 -timeout=8m`
 - `ASTROTUI_E2E_CONTEXT=kind-kind make nfr-live` (passed against a live kind cluster)
+- GitHub Actions `ci` on `main`, run `25633162013`, passed lint/race/envtest/build/perf/coverage/release-dry-run plus kind e2e and `make nfr-live`
+- GitHub Actions `ci` on `v0.1.0-rc.5`, run `25633162121`, passed lint/race/envtest/build/perf/coverage/release-dry-run plus kind e2e and `make nfr-live`
+- GitHub Actions `release` on `v0.1.0-rc.5`, run `25633162128`, passed and published release assets plus GHCR images
+- `gh release download v0.1.0-rc.5 --repo alphabravo-oss/astronomer-tui && shasum -a 256 -c checksums.txt`
+- `cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig --certificate-identity-regexp 'https://github.com/alphabravo-oss/astronomer-tui/.github/workflows/release.yml@refs/tags/v0.1.0-rc.5' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`
 - `PATH="$HOME/go/bin:$PATH" make release-snapshot`
 - `PATH="$HOME/go/bin:$PATH" goreleaser release --snapshot --clean --skip=sign,publish`
 - `PATH="$HOME/go/bin:$PATH" goreleaser check`
 
-## Remaining External Verification
+## Release Verification
 
-These items cannot be proven from the current local workspace alone:
+The `v0.1.0-rc.5` prerelease is published at <https://github.com/alphabravo-oss/astronomer-tui/releases/tag/v0.1.0-rc.5>. It contains the expected four platform archives, `checksums.txt`, `checksums.txt.sig`, and `checksums.txt.pem`. The downloaded archive checksums pass, and the checksum signature verifies against the GitHub Actions OIDC identity for `.github/workflows/release.yml` at `refs/tags/v0.1.0-rc.5`.
 
-- Push a `v*` tag to GitHub and verify the release workflow produces cosign-signed checksums/binaries through GitHub OIDC.
-- Verify the release workflow publishes `ghcr.io/alphabravo-oss/astronomer-tui:<version>` as a multi-arch image.
+The release workflow published:
 
-Conclusion: the implementation and local/live-kind harness are complete to the extent this workspace can prove. The project should not be declared fully complete until the external release verification passes.
+- `ghcr.io/alphabravo-oss/astronomer-tui:0.1.0-rc.5-amd64` digest `sha256:8a38be79373837894025bbf2abe7a2d68a7ce35e09e36466630a752104c7fb8f`
+- `ghcr.io/alphabravo-oss/astronomer-tui:0.1.0-rc.5-arm64` digest `sha256:52988cb1f095866a5177044c77df0dc132deff6c589c9219f6d9b3c5a0528469`
+- `ghcr.io/alphabravo-oss/astronomer-tui:0.1.0-rc.5` multi-arch manifest digest `sha256:f11f896d87d72516c62d692f2e2ea4d9dcf7d13813742aa2dbdaaae3ecdba203`
+
+Anonymous GHCR manifest inspection currently returns `unauthorized`, which indicates the GitHub package visibility is not public for unauthenticated pulls. The image publish itself is verified by the release workflow logs; public anonymous pull access requires adjusting the repository/package visibility settings in GitHub.
+
+Conclusion: the implementation, local/live-kind harness, CI gates, signed release, and GHCR publish pipeline are complete. The only remaining operational caveat is GHCR anonymous package visibility.
