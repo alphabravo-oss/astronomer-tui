@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">astrotui pod list screenshot</title>
+  <desc id="desc">Terminal UI showing a Kubernetes pods table, command palette, log panel, and safety guard.</desc>
+  <rect width="1200" height="720" fill="#0b1020"/>
+  <rect x="28" y="28" width="1144" height="664" rx="6" fill="#101827" stroke="#2d3b52" stroke-width="2"/>
+  <text x="52" y="64" fill="#67e8f9" font-family="Menlo, Consolas, monospace" font-size="18">astrotui [kind-kind/default] pods</text>
+  <text x="920" y="64" fill="#94a3b8" font-family="Menlo, Consolas, monospace" font-size="15">? help  Ctrl+P palette  / filter</text>
+  <line x1="52" y1="88" x2="1148" y2="88" stroke="#2d3b52" stroke-width="1"/>
+
+  <g font-family="Menlo, Consolas, monospace" font-size="15">
+    <text x="52" y="122" fill="#e2e8f0">NAMESPACE</text>
+    <text x="188" y="122" fill="#e2e8f0">NAME</text>
+    <text x="390" y="122" fill="#e2e8f0">READY</text>
+    <text x="474" y="122" fill="#e2e8f0">STATUS</text>
+    <text x="590" y="122" fill="#e2e8f0">RESTARTS</text>
+    <text x="710" y="122" fill="#e2e8f0">IP</text>
+    <text x="845" y="122" fill="#e2e8f0">NODE</text>
+    <text x="1040" y="122" fill="#e2e8f0">AGE</text>
+
+    <rect x="44" y="142" width="1104" height="34" fill="#1d4ed8"/>
+    <text x="52" y="165" fill="#ffffff">default</text>
+    <text x="188" y="165" fill="#ffffff">api-7d6cc7f7df-zl6rq</text>
+    <text x="390" y="165" fill="#ffffff">2/2</text>
+    <text x="474" y="165" fill="#ffffff">Running</text>
+    <text x="590" y="165" fill="#ffffff">0</text>
+    <text x="710" y="165" fill="#ffffff">10.244.0.12</text>
+    <text x="845" y="165" fill="#ffffff">kind-worker</text>
+    <text x="1040" y="165" fill="#ffffff">14m</text>
+
+    <text x="52" y="207" fill="#cbd5e1">default</text>
+    <text x="188" y="207" fill="#cbd5e1">worker-6bd4f8f779-pj4zn</text>
+    <text x="390" y="207" fill="#cbd5e1">1/1</text>
+    <text x="474" y="207" fill="#cbd5e1">Running</text>
+    <text x="590" y="207" fill="#cbd5e1">0</text>
+    <text x="710" y="207" fill="#cbd5e1">10.244.0.18</text>
+    <text x="845" y="207" fill="#cbd5e1">kind-worker</text>
+    <text x="1040" y="207" fill="#cbd5e1">13m</text>
+
+    <text x="52" y="248" fill="#cbd5e1">observability</text>
+    <text x="188" y="248" fill="#fca5a5">collector-5c6fd59f4f-t8hnx</text>
+    <text x="390" y="248" fill="#fca5a5">0/1</text>
+    <text x="474" y="248" fill="#fca5a5">ImagePullBackOff</text>
+    <text x="590" y="248" fill="#cbd5e1">4</text>
+    <text x="710" y="248" fill="#cbd5e1">10.244.0.23</text>
+    <text x="845" y="248" fill="#cbd5e1">kind-worker2</text>
+    <text x="1040" y="248" fill="#cbd5e1">9m</text>
+  </g>
+
+  <rect x="52" y="308" width="500" height="252" rx="4" fill="#111c2e" stroke="#334155"/>
+  <text x="74" y="340" fill="#67e8f9" font-family="Menlo, Consolas, monospace" font-size="16">Command Palette</text>
+  <rect x="74" y="362" width="456" height="34" rx="4" fill="#0f172a" stroke="#475569"/>
+  <text x="90" y="385" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="15">&gt; restart failing pods</text>
+  <text x="74" y="430" fill="#e2e8f0" font-family="Menlo, Consolas, monospace" font-size="15">Actions</text>
+  <text x="92" y="460" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="14">restart Deployment/api</text>
+  <text x="92" y="488" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="14">logs Pod/collector-5c6fd59f4f-t8hnx</text>
+  <text x="92" y="516" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="14">AI: explain ImagePullBackOff</text>
+
+  <rect x="590" y="308" width="558" height="252" rx="4" fill="#111c2e" stroke="#334155"/>
+  <text x="612" y="340" fill="#67e8f9" font-family="Menlo, Consolas, monospace" font-size="16">Logs and Events</text>
+  <text x="612" y="378" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="14">[collector] pull access denied for ghcr.io/acme/collector:latest</text>
+  <text x="612" y="408" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="14">[collector] Back-off pulling image</text>
+  <text x="612" y="438" fill="#a7f3d0" font-family="Menlo, Consolas, monospace" font-size="14">g e jumps to Events    g o jumps to owner</text>
+  <text x="612" y="492" fill="#fcd34d" font-family="Menlo, Consolas, monospace" font-size="14">Prod guard: type context name before delete/scale/restart</text>
+
+  <line x1="52" y1="604" x2="1148" y2="604" stroke="#2d3b52"/>
+  <text x="52" y="638" fill="#94a3b8" font-family="Menlo, Consolas, monospace" font-size="15">Enter describe  l logs  e edit  d delete  s scale  r restart  f port-forward</text>
+</svg>

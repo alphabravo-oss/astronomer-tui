@@ -2,81 +2,203 @@ astrotui — Implementation Progress
 Spec: docs/specs/i-want-to-make-a-clone-of-k9s-but-call-it-astronomer-tui-and.md
 Started: 2026-05-08
 
-Phase 1 — Foundation (US-1, US-2, US-3, US-4) [PENDING]
-  US-1  Project scaffolding & module bootstrap                      [PENDING]
-  US-2  Kubeconfig loading + auth providers                         [PENDING]
-  US-3  Resource discovery + watch infrastructure                   [PENDING]
-  US-4  Generic resource list view (table widget)                   [PENDING]
+Phase 1 — Foundation (US-1, US-2, US-3, US-4) [DONE]
+  US-1  Project scaffolding & module bootstrap                      [DONE]
+  US-2  Kubeconfig loading + auth providers                         [DONE]
+  US-3  Resource discovery + watch infrastructure                   [DONE]
+  US-4  Generic resource list view (table widget)                   [DONE]
   Verify: make build && make test && make lint && go run ./cmd/astrotui --context kind-kind
 
-Phase 2 — Resource breadth (US-5..US-11) [PENDING]
-  US-5  Core renderers (pods/deploys/svcs/cm/secrets/ns/nodes/events) [PENDING]
-  US-6  Workload renderers (sts/ds/job/cronjob/rs/hpa/pdb)          [PENDING]
-  US-7  Networking renderers (ingress/endpointslice/networkpolicy)  [PENDING]
-  US-8  Storage renderers (pv/pvc/sc/volumeattachment)              [PENDING]
-  US-9  RBAC renderers                                              [PENDING]
-  US-10 Cluster renderers (nodes-ext, events-ext, apiservices, leases) [PENDING]
-  US-11 Dynamic CRD view                                            [PENDING]
+Phase 2 — Resource breadth (US-5..US-11) [DONE]
+  US-5  Core renderers (pods/deploys/svcs/cm/secrets/ns/nodes/events) [DONE]
+  US-6  Workload renderers (sts/ds/job/cronjob/rs/hpa/pdb)          [DONE]
+  US-7  Networking renderers (ingress/endpointslice/networkpolicy)  [DONE]
+  US-8  Storage renderers (pv/pvc/sc/volumeattachment)              [DONE]
+  US-9  RBAC renderers                                              [DONE]
+  US-10 Cluster renderers (nodes-ext, events-ext, apiservices, leases) [DONE]
+  US-11 Dynamic CRD view                                            [DONE]
   Verify: make test ./internal/ui/views/...
 
-Phase 3 — Write actions + safety guard (US-12..US-19) [PENDING]
-  US-12 Prod-context guard primitive                                [PENDING]
-  US-13 Edit via $EDITOR                                            [PENDING]
-  US-14 Delete with guard                                           [PENDING]
-  US-15 Scale workload                                              [PENDING]
-  US-16 Restart workload                                            [PENDING]
-  US-17 Exec into pod                                               [PENDING]
-  US-18 Port-forward                                                [PENDING]
-  US-19 Port-forward manager view                                   [PENDING]
+Phase 3 — Write actions + safety guard (US-12..US-19) [DONE]
+  US-12 Prod-context guard primitive                                [DONE]
+  US-13 Edit via $EDITOR                                            [DONE]
+  US-14 Delete with guard                                           [DONE]
+  US-15 Scale workload                                              [DONE]
+  US-16 Restart workload                                            [DONE]
+  US-17 Exec into pod                                               [DONE]
+  US-18 Port-forward                                                [DONE]
+  US-19 Port-forward manager view                                   [DONE]
   Verify: make e2e-actions
 
-Phase 4 — Logs deluxe (US-20..US-23) [PENDING]
-  US-20 Single-pod log view                                         [PENDING]
-  US-21 Multi-pod merged stream                                     [PENDING]
-  US-22 Structured-log parsing + regex search                       [PENDING]
-  US-23 Jump-to-source + AI summarize button                        [PENDING]
+Phase 4 — Logs deluxe (US-20..US-23) [DONE]
+  US-20 Single-pod log view                                         [DONE]
+  US-21 Multi-pod merged stream                                     [DONE]
+  US-22 Structured-log parsing + regex search                       [DONE]
+  US-23 Jump-to-source + AI summarize button                        [DONE]
   Verify: make e2e-logs
 
-Phase 5 — Command palette + discoverability (US-24..US-29) [PENDING]
-  US-24 Palette infrastructure                                      [PENDING]
-  US-25 Resource indexer                                            [PENDING]
-  US-26 Action indexer                                              [PENDING]
-  US-27 Context / namespace indexer                                 [PENDING]
-  US-28 Plugin indexer                                              [PENDING]
-  US-29 Live keybind overlay (?)                                    [PENDING]
+Phase 5 — Command palette + discoverability (US-24..US-29) [DONE]
+  US-24 Palette infrastructure                                      [DONE]
+  US-25 Resource indexer                                            [DONE]
+  US-26 Action indexer                                              [DONE]
+  US-27 Context / namespace indexer                                 [DONE]
+  US-28 Plugin indexer                                              [DONE]
+  US-29 Live keybind overlay (?)                                    [DONE]
   Verify: make bench-palette && make test ./internal/ui/palette/...
 
-Phase 6 — Plugins, sessions, theming (US-30..US-33) [PENDING]
-  US-30 k9s plugins.yaml drop-in loader                             [PENDING]
-  US-31 Native astrotui plugin schema                               [PENDING]
-  US-32 Session restore                                             [PENDING]
-  US-33 Theme/skin engine                                           [PENDING]
+Phase 6 — Plugins, sessions, theming (US-30..US-33) [DONE]
+  US-30 k9s plugins.yaml drop-in loader                             [DONE]
+  US-31 Native astrotui plugin schema                               [DONE]
+  US-32 Session restore                                             [DONE]
+  US-33 Theme/skin engine                                           [DONE]
   Verify: make test ./internal/plugins/... ./internal/session/... ./internal/ui/theme/...
 
-Phase 7 — AI module (US-34..US-38) [PENDING]
-  US-34 LLMProvider interface + multi-provider config               [PENDING]
-  US-35 AI: explain failure                                         [PENDING]
-  US-36 AI: summarize / Q&A logs                                    [PENDING]
-  US-37 AI: explain / lint manifest                                 [PENDING]
-  US-38 AI: NL-to-action in palette                                 [PENDING]
+Phase 7 — AI module (US-34..US-38) [DONE]
+  US-34 LLMProvider interface + multi-provider config               [DONE]
+  US-35 AI: explain failure                                         [DONE]
+  US-36 AI: summarize / Q&A logs                                    [DONE]
+  US-37 AI: explain / lint manifest                                 [DONE]
+  US-38 AI: NL-to-action in palette                                 [DONE]
   Verify: make test ./internal/ai/...    (opt-in: make test-llm-real)
 
-Phase 8 — Config, distribution, hardening (US-39..US-43) [PENDING]
-  US-39 Config loader + schema validation                           [PENDING]
-  US-40 astrotui config import-k9s                                  [PENDING]
-  US-41 Build & release pipeline (GoReleaser)                       [PENDING]
-  US-42 Container image                                             [PENDING]
-  US-43 Performance harness + NFR enforcement                       [PENDING]
+Phase 8 — Config, distribution, hardening (US-39..US-43) [PARTIAL]
+  US-39 Config loader + schema validation                           [DONE]
+  US-40 astrotui config import-k9s                                  [DONE]
+  US-41 Build & release pipeline (GoReleaser)                       [PARTIAL]
+  US-42 Container image                                             [DONE]
+  US-43 Performance harness + NFR enforcement                       [DONE]
   Verify: make perf && goreleaser release --snapshot --clean
 
 NFR enforcement (verified each phase, gated in Phase 8 perf harness):
-  NFR-1  Cold start <=300ms on 1k-pod cluster                       [PENDING]
-  NFR-2  Render latency targets                                     [PENDING]
-  NFR-3  Idle CPU <=2%                                              [PENDING]
-  NFR-4  RSS <=150MB                                                [PENDING]
-  NFR-5  Binary <=30MB                                              [PENDING]
-  NFR-6  Static kubeconfig + exec auth                              [PENDING]
-  NFR-7  Zero telemetry                                             [PENDING]
-  NFR-8  Test coverage targets                                      [PENDING]
-  NFR-9  Signing + non-root container                               [PENDING]
-  NFR-10 Panic recovery                                             [PENDING]
+  NFR-1  Cold start <=300ms on 1k-pod cluster                       [DONE]
+  NFR-2  Render latency targets                                     [DONE]
+  NFR-3  Idle CPU <=2%                                              [DONE]
+  NFR-4  RSS <=150MB                                                [DONE]
+  NFR-5  Binary <=30MB                                              [DONE]
+  NFR-6  Static kubeconfig + exec auth                              [DONE]
+  NFR-7  Zero telemetry                                             [DONE]
+  NFR-8  Test coverage targets                                      [DONE]
+  NFR-9  Signing + non-root container                               [PARTIAL]
+  NFR-10 Panic recovery                                             [DONE]
+
+Latest verification evidence (2026-05-09):
+  - `make` passed: golangci-lint 0 issues, `go test -race ./...`, stripped `go build`.
+  - Repository layout matches the spec, including the reserved tracked `pkg/` placeholder, Apache-2.0 `LICENSE`, module path `github.com/alphabravo-oss/astrotui`, and golangci-lint config enabling `errcheck`, `staticcheck`, `gosec`, and `revive`.
+  - GoReleaser snapshot binary sizes are below 30MiB per arch: darwin/amd64 30,876,240 bytes, darwin/arm64 28,999,282 bytes, linux/amd64 30,228,642 bytes, linux/arm64 28,246,178 bytes.
+  - `make envtest` passed with Kubernetes 1.36 envtest assets managed by `setup-envtest@v0.24.0`.
+  - `test/envtest/envtest_test.go` verifies `ResourceCache` watch events propagate within 200ms after object creation against a real envtest API server.
+  - `test/envtest/envtest_test.go` verifies cached discovery lists built-ins plus an installed CRD in <500ms against envtest.
+  - `test/envtest/envtest_test.go` installs a CRD, creates an instance, verifies it appears through the dynamic informer-backed cache, and renders CRD `additionalPrinterColumns` in the dynamic view.
+  - `test/envtest/envtest_test.go` creates real fixture-cluster objects through the envtest API server for every built-in renderer GVR (core, workload, networking, storage, RBAC, and cluster resources), waits for them through `ResourceCache`, and verifies their built-in renderer output.
+  - `test/envtest/envtest_test.go` fails if any `views.Builtins()` GVR lacks a fixture-cluster coverage entry, keeping k9s-parity renderer coverage from regressing.
+  - `make perf` passed: builds a stripped binary and enforces <=30MB, <50ms palette search on 10k entries, <16ms filter/render on 5k rows, <100ms first-frame row build after a synced 1,000-pod cache, sampled <300ms headless config-failure startup, a local idle CPU <=2% process-time guard, a ResourceCache <=30MB allocation guard for 5,000 pods, and a local <150MB working-set allocation guard.
+  - `make e2e` now has a build-tagged kind package; tests skip unless `ASTROTUI_E2E=1` and a real kind context are supplied.
+  - `test/kind/e2e_test.go` kubeconfig golden path loads the kind context and requires namespace listing to return at least one namespace when e2e is enabled.
+  - `test/kind/e2e_test.go` action golden path creates an isolated namespace/configmap/deployment and exercises real cluster edit, delete, scale, restart, and prod-context typed confirmation through the shared action/edit/safety executors when e2e is enabled.
+  - `test/kind/e2e_test.go` exec/port-forward golden path creates a running pod, executes a real SPDY command, starts a real client-go port-forward, and verifies cancellation cleanup when e2e is enabled.
+  - `test/kind/e2e_test.go` logs golden path creates an isolated namespace/pod, emits a known line, waits for completion, and streams logs through `internal/logs.StreamPodLogs` when e2e is enabled.
+  - `test/kind/e2e_test.go` performance golden path creates 1,000 real pod API objects in a kind namespace, waits for the informer-backed `ResourceCache`, enforces <300ms informer sync plus first render, and enforces a <100ms cache-to-render pass against `views.Builtins()` when e2e is enabled.
+  - `go test -tags=e2e ./test/kind/...` passed locally with e2e tests skipped because `ASTROTUI_E2E` is not set.
+  - `make bench-palette` passed: BenchmarkSearch10k-16 814 iterations at 1,532,024 ns/op locally.
+  - Local Docker build passed for `astrotui:local-test`; inspect reports `User=nonroot:nonroot`, entrypoint `/usr/local/bin/astrotui`, size 9,948,701 bytes.
+  - Local GoReleaser Docker snapshot passed with `goreleaser release --snapshot --clean --skip=sign,publish`: it built `ghcr.io/alphabravo-oss/astronomer-tui:0.0.0-SNAPSHOT-768357f-amd64` (10,775,957 bytes) and `ghcr.io/alphabravo-oss/astronomer-tui:0.0.0-SNAPSHOT-768357f-arm64` (9,558,535 bytes), both `User=nonroot:nonroot` with entrypoint `/usr/local/bin/astrotui`.
+  - `.dockerignore` restricts image build context to the prepared `astrotui` binary and Dockerfile; `test/distribution/distribution_test.go` verifies the context policy.
+  - `goreleaser check` passed with GoReleaser v2.15.4.
+  - `make release-snapshot` passed locally with GoReleaser v2.15.4: it runs `goreleaser release --snapshot --clean --skip=sign,publish,docker` and produced the four expected archives (`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`) plus `checksums.txt` without interactive signing.
+  - Direct `goreleaser release --snapshot --clean --skip=publish` reaches `cosign sign-blob` and then requires local keyless/OIDC interaction, so local signing remains unproven; the tag-push release workflow has GitHub OIDC permissions for non-interactive keyless signing.
+  - `.github/workflows/release.yml` now runs on `v*` tags with GoReleaser, cosign installer, Buildx, GHCR login, and OIDC/package permissions; `test/distribution/distribution_test.go` verifies the workflow contract.
+  - `.github/workflows/ci.yml` now runs lint, race tests, envtest, build, perf, coverage NFR gates, a GoReleaser-backed `make release-snapshot` dry run, and a kind-backed `make e2e` job with `ASTROTUI_E2E=1`; `test/distribution/distribution_test.go` verifies these CI commands and e2e environment are present.
+  - `.github/workflows/ci.yml` also runs `make nfr-live` against the kind context; the Makefile target sets `ASTROTUI_E2E_PROCESS_IDLE=5m` and runs `TestHeadlessRenderProcessGoldenPath` with an 8-minute timeout.
+  - `internal/cluster/cache_test.go` verifies dynamic fake-client cache list + subscribe behavior.
+  - `internal/cluster/cache_test.go` verifies informers created after `ResourceCache.Start` are started and synced, matching the app's startup/context-switch order.
+  - `internal/cluster/client_test.go` verifies kubeconfig static token loading without network access, `--context` style context override, namespace override/default resolution, discovery filtering, namespace listing, exec-auth plugin registration import, and an actual exec-auth helper flow where a fake helper supplies a bearer token accepted by an HTTPS test apiserver.
+  - `cmd/astrotui/main_test.go` verifies missing kubeconfig exits with EX_USAGE (64) in headless startup.
+  - `internal/ui/views/renderers_test.go` verifies CRD additionalPrinterColumns rendering.
+  - `internal/ui/views/renderers_test.go` verifies CRDs without additionalPrinterColumns fall back to `NAME` and `AGE`.
+  - `internal/ui/views/renderers_test.go` verifies resource detail output renders as YAML.
+  - `internal/ui/views/renderers_test.go` verifies richer built-in headers for representative workload, autoscaling, storage, RBAC, and cluster resources.
+  - `internal/ui/views/renderers_test.go` verifies common built-in renderer field extraction for workload status and persistent volume spec/claim fields.
+  - `internal/ui/views/renderers_test.go` verifies core, networking, storage, node, and event renderer field extraction for pod readiness/restarts, service type/IP/ports, node roles/version/status, ingress host/address/class, storage class settings, and event object/message fields.
+  - `internal/ui/views/renderers.go` built-in headers are aligned to the corresponding upstream k9s renderer files cloned from `github.com/derailed/k9s` on 2026-05-09 where k9s ships explicit renderers; HPA and Events remain on Kubernetes table/default-style columns.
+  - `internal/ui/views/renderers_test.go` plus `internal/ui/views/testdata/builtin_renderers.golden` snapshot every built-in renderer's k9s-aligned headers and representative row output in deterministic GVR order.
+  - `internal/ui/views/renderers.go` now extracts PodDisruptionBudget min/max availability, allowed/current/desired/expected disruption counts, RBAC subject columns, label columns, and several k9s-style storage/RBAC header aliases; the golden renderer snapshot covers the row output.
+  - `internal/ui/app_test.go` verifies every resource alias exposed through commands/palette resolves to a renderer.
+  - `internal/actions/actions_test.go` verifies action catalog, dynamic patching, and merge-patch generation.
+  - `internal/actions/actions_test.go` verifies `$EDITOR` workflow abstraction writes YAML to a temp file and applies the resulting patch.
+  - `internal/actions/actions_test.go` verifies edit patch conflicts return an `EditConflictError` with an original/edited diff; TUI edit handling displays that diff in an edit-conflict modal.
+  - `internal/actions/executor_test.go` verifies safety-aware delete and shared scale execution.
+  - `internal/actions/executor_test.go` verifies Deployment and StatefulSet scale/restart execution through the shared safety-aware executor; TUI scale/restart guards now match the workload action catalog.
+  - `internal/actions/exec_test.go` verifies exec shell fallback order (`bash`, `sh`, `/bin/ash`), multi-container picker detection, and REST config validation for the client-go SPDY exec runner.
+  - `internal/actions/portforward_test.go` verifies default pod/service port-forward specs, manager kill behavior, service-to-pod selector resolution, and REST config validation for the client-go port-forward runner.
+  - `internal/logs/buffer_test.go` verifies bounded merged log buffer, deterministic pod color, structured filtering, regex matches, and save-to-file.
+  - `internal/logs/kube_test.go` verifies pod selector lookup, container enumeration, container-picker hints, and log target planning.
+  - `internal/ui/app_test.go` verifies log line streaming into a bounded buffer and rendering with pod prefixes; TUI log action now opens a live log view with structured filter, regex, and save prompts.
+  - `internal/ui/app_test.go` verifies log container targeting and wrap toggling; TUI pod logs now open a container picker for multi-container pods and support `w` to toggle line wrap.
+  - `internal/ui/app_test.go` verifies rendered merged logs include deterministic tview color tags around pod prefixes, while saved logs remain plain text through `logs.FormatEntry`.
+  - `internal/ui/app_test.go` verifies log AI summary context uses the latest filtered log lines; TUI log view now has an AI summary action with a disabled hint when AI is not configured.
+  - TUI log view now uses `a` for quick AI summaries and the spec `Ctrl+E` binding for an AI logs panel with a follow-up question input; `internal/ui/app_test.go` verifies the chat input is focused.
+  - TUI log view now supports `g e` to jump to Events filtered by the selected pod, `g o` to jump to the selected pod's owner workload when owner metadata is available, and `g a` for AI context; `internal/ui/app_test.go` verifies log-line selection, owner GVR mapping, and selected-pod owner lookup.
+  - `internal/ui/app_test.go` verifies log regex navigation state wraps through matches; TUI log view now supports `n` / `N` after regex search.
+  - `internal/plugins/plugins_test.go` verifies k9s/native plugin merge precedence, variable expansion, and command planning.
+  - `internal/plugins/plugins_test.go` plus `docs/plugins.md` verify the native `~/.config/astrotui/plugins.yaml` schema is additive to k9s plugin loading, with native entries taking merge precedence.
+  - `internal/ui/app_test.go` plus plugin tests verify foreground plugin execution is wrapped in TUI suspend/fallback behavior while preserving injected executor support.
+  - `internal/ai/provider_test.go` verifies provider factory defaults plus OpenAI/Anthropic/Ollama-style HTTP complete and streaming response handling without real network calls; Anthropic requests include system-block prompt caching via `cache_control`.
+  - `make test-llm-real` passed in this environment with provider env vars absent, so the real-provider subtests were discovered and skipped; when `ASTROTUI_AI_REAL=1` plus `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_HOST` are present, the same target exercises real provider completions.
+  - `internal/ui/app_test.go` verifies palette `>` / `?` queries create AI NL-action entries and execute through the configured provider; CLI now constructs the configured AI provider and passes it to the app.
+  - `internal/ui/app_test.go` verifies AI NL-action responses can parse structured JSON action calls while preserving clarifying text; structured actions dispatch through the same action catalog handlers as palette/keybind actions.
+  - `internal/ui/app_test.go` verifies manifest AI disabled hint; TUI YAML detail view now exposes AI explain/lint via `a`.
+  - TUI YAML detail view now accepts the spec `Ctrl+E` binding for AI explain/lint in addition to the existing `a` shortcut.
+  - `internal/ui/app_test.go` verifies failing-pod AI context includes pod spec, pod status, and recent Kubernetes events; main table `Ctrl+E` now opens a streaming AI failure-analysis panel for failing pods when AI is configured.
+  - `internal/config/config_test.go` verifies strict unknown-field rejection includes source line/column evidence.
+  - `cmd/astrotui/main_test.go` verifies invalid config exits with EX_CONFIG (78) before Kubernetes startup and `--version` short-circuits config/kube loading.
+  - `internal/config/config_test.go` verifies `config import-k9s` has deterministic per-file output and handles imported/skipped/conflict statuses idempotently across config, skin, hotkeys, and aliases.
+  - `internal/ui/theme/theme_test.go` verifies custom/default skin loading from `~/.config/astrotui/skin.yaml` semantics and poll-based live reload updates.
+  - `internal/ui/theme/theme.go` ships `dark`, `light`, and `dim` built-in skins; theme tests verify default fallback and custom YAML loading.
+  - `internal/ui/app_test.go` verifies the resolved skin is applied to table/header styling instead of hard-coded header colors.
+  - `internal/ui/app_test.go` verifies live skin updates redraw table/header styling; CLI now loads the skin file before TUI startup and passes a watcher into the app.
+  - `cmd/astrotui/main.go` now separates the 15s Kubernetes setup timeout from the long-lived TUI runtime context so app informers/theme watchers are not canceled after startup.
+  - `internal/ui/app_test.go` verifies help overlay text is generated from the shared action catalog, without hard-coded stale action shortcuts.
+  - `internal/ui/app_test.go` verifies help/palette action catalogs use the selected object's kind, so Deployment selections expose scale/restart/logs instead of Pod exec.
+  - `internal/ui/app_test.go` verifies palette UI result population groups matches by Resources / Actions / Contexts / Namespaces / Plugins / AI and preserves row-to-entry execution mapping.
+  - `internal/ui/app_test.go` verifies restored session state selects the last resource view and saved session state captures current context, namespace, view, and filter.
+  - `internal/ui/app_test.go` verifies table selection maps data rows to resources for Enter-driven detail navigation.
+  - `internal/ui/app_test.go` verifies list row-model filtering and Shift+number sorting preserve visible object selection order.
+  - `internal/ui/app_test.go` verifies resource-view cache watch events refresh the visible object model through the TUI update path without a race.
+  - `internal/ui/app_test.go` verifies delete action request construction; TUI `d` now invokes the shared executor and prod-context typed confirmation path.
+  - `internal/ui/app_test.go` verifies palette `edit` dispatch runs through the `$EDITOR` workflow; TUI `e` is wired to the same guarded edit path.
+  - `internal/ui/app_test.go` verifies palette/keybind operational actions for pod `logs`, `exec`, and `port-forward` dispatch through the existing planners; port-forward specs are tracked by the manager.
+  - `internal/ui/app_test.go` verifies port-forward `local:remote` input parsing, cancellable runner goroutine lifecycle, and manager registration, with defaults still derived from pod/service ports.
+  - TUI pod and service port-forward now default to the client-go SPDY port-forward runner when a real REST config/clientset are available; service forwards resolve to a matching pod via the service selector.
+  - `internal/ui/app_test.go` verifies exec planning honors safety policy: wrong prod confirmation is rejected, exact context confirmation passes, and read-only contexts block exec.
+  - `internal/ui/app_test.go` verifies TUI exec dispatch uses the first planned target through an injectable runner; real clients default to client-go remotecommand SPDY execution with terminal suspend/fallback.
+  - `internal/ui/app_test.go` verifies exec dispatch tries the shell fallback chain in order, so a missing `bash` can fall through to `sh` or `/bin/ash`.
+  - `internal/ui/app_test.go` verifies multi-container exec selection preserves the chosen container in the planned target and command display.
+  - `internal/ui/app_test.go` verifies `:pf` command parsing plus sorted port-forward manager rows and selected-forward lookup for kill actions.
+  - `internal/ui/app_test.go` verifies selected port-forwards can be killed from the manager; TUI manager supports the spec `Ctrl+K` kill binding and labels the elapsed column as `SINCE`.
+  - `internal/ui/app_test.go` verifies Deployment log actions resolve workload selectors to pod log targets through the current Kubernetes clientset.
+  - `internal/ui/app_test.go` verifies shared action request construction for workload restart; TUI `s`/`r` now route scale/restart through modals, executor, and prod-context confirmation.
+  - `internal/ui/app_test.go` verifies resource command aliases; TUI `:` command now switches between pods and deployments views.
+  - `internal/ui/app_test.go` verifies broad resource command aliases for core/workload/network/storage/RBAC resources; aliases are indexed in the palette as resource entries.
+  - `internal/ui/app_test.go` verifies explicit dynamic GVR commands like `:example.com/v1/widgets` and `:v1/widgets` resolve to generic renderers for CRD-style views.
+  - `internal/ui/app_test.go` verifies `:namespace <name>` / `:ns <name>` parsing and cluster-scoped resource namespace handling.
+  - `internal/ui/app_test.go` verifies palette namespace-entry execution; palette entries now execute namespace switches, resource-view switches, and object detail navigation.
+  - `internal/ui/app_test.go` verifies namespace palette entries include namespaces discovered from the current clientset, with current namespace fallback.
+  - `internal/ui/app_test.go` verifies palette context-entry execution rebuilds the client/cache through an injectable factory and preserves the active namespace.
+  - `internal/ui/app_test.go` verifies palette action-entry execution dispatches to shared describe/delete/scale/restart handlers.
+  - `internal/ui/app_test.go` verifies plugin palette-entry execution plans commands with selected resource variables.
+  - `internal/plugins/plugins_test.go` plus UI plugin tests verify variable expansion orders longer keys first (`$NAMESPACE` is not corrupted by `$NAME`).
+  - `internal/ui/recovery_test.go` verifies panic recovery writes a crash log and reports its saved path; app-level handler wrappers display a recovered-panic modal containing the crash-log path.
+  - `test/kind/perf_test.go` verifies binary-size, palette-latency, 5k-row filter/render latency, first-frame latency after a synced 1,000-pod cache, sampled idle CPU, ResourceCache memory for 5,000 pods, sampled headless startup, and local working-set memory NFRs in the formal perf target; strict perf checks are skipped under `go test -race` and enforced by `make perf`.
+  - `make coverage-nfr` passed: internal/cluster 81.2%, internal/actions 74.4%, internal/logs 77.2% statement coverage.
+  - Live `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind make e2e` passed against a real kind cluster in this workspace after installing `kind` locally.
+  - Live `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind ASTROTUI_E2E_PROCESS_IDLE=5m go test -tags=e2e ./test/kind/... -run TestHeadlessRenderProcessGoldenPath -count=1 -timeout=8m` passed against a real kind cluster; the process-level headless render path enforces 1,000 rendered pod rows, `total_ms <= 300`, `render_ms <= 100`, idle CPU <=2% over the requested idle window, and RSS <=150MiB after the idle window.
+  - Live `ASTROTUI_E2E_CONTEXT=kind-kind make nfr-live` passed and runs the same 5-minute process-level NFR gate through the Makefile target used by CI.
+  - `test/kind/e2e_test.go` provides gated kind kubeconfig, edit/delete/scale/restart/exec/port-forward, prod-guard, log, and 1,000-pod performance golden paths.
+  - Live kind e2e exposed a Kubernetes update conflict in immediate Deployment scale/restart flows; `internal/actions/actions.go` now retries Deployment/StatefulSet scale updates with `retry.RetryOnConflict`.
+  - `test/distribution/distribution_test.go` verifies GoReleaser targets/archive names/signing stanza, non-root Dockerfile, and install script artifact naming.
+  - `README.md` now documents curl-based install, local quickstart, headless check, container usage, and includes `docs/screenshots/astrotui-main.svg`; `test/distribution/distribution_test.go` verifies the install/quickstart/screenshot contract.
+  - `test/distribution/distribution_test.go` verifies `go.mod` has no common telemetry dependency markers; source audit shows outbound HTTP construction is confined to configured AI providers while Kubernetes network paths go through client-go apiserver/log/exec/port-forward clients.
+  - `docs/specs/completion-audit.md` maps each explicit spec deliverable, DoD gate, and NFR to concrete evidence and separates local/live-kind completion from external release verification.
+
+Remaining external verification before calling the project fully complete:
+  - Push a `v*` tag on GitHub and verify the release workflow publishes signed checksums/binaries and the multi-arch GHCR image through GitHub OIDC.
