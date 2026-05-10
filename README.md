@@ -28,7 +28,7 @@ For non-interactive connectivity checks:
 Container usage:
 
 ```bash
-docker run --rm -it -v "$HOME/.kube:/home/nonroot/.kube:ro" ghcr.io/alphabravo-oss/astronomer-tui:latest
+docker run --rm -it -v "$HOME/.kube:/home/nonroot/.kube:ro" ghcr.io/alphabravo-oss/astrotui:<version>
 ```
 
 ## Screenshot
@@ -56,7 +56,7 @@ What we want to do better than k9s:
 | Multi-cluster | Single active context + fast switcher |
 | Editing | Shell out to `$EDITOR` |
 | Config | `~/.config/astrotui/` (one-shot `config import-k9s` migrates skin/hotkeys/aliases) |
-| Distribution | Signed GitHub Releases binaries + `ghcr.io/alphabravo-oss/astronomer-tui` container image |
+| Distribution | Signed GitHub Releases binaries + `ghcr.io/alphabravo-oss/astrotui` container image |
 | Telemetry | Zero |
 | License | Apache-2.0 |
 

@@ -52,7 +52,7 @@ func TestGoReleaserConfigMatchesDistributionSpec(t *testing.T) {
 	if len(cfg.Signs) == 0 || cfg.Signs[0].Cmd != "cosign" {
 		t.Fatalf("expected cosign signing config, got %#v", cfg.Signs)
 	}
-	if len(cfg.Dockers) != 2 || len(cfg.DockerManifests) != 1 || !strings.Contains(cfg.DockerManifests[0].NameTemplate, "ghcr.io/alphabravo-oss/astronomer-tui") {
+	if len(cfg.Dockers) != 2 || len(cfg.DockerManifests) != 1 || !strings.Contains(cfg.DockerManifests[0].NameTemplate, "ghcr.io/alphabravo-oss/astrotui") {
 		t.Fatalf("unexpected docker config dockers=%#v manifests=%#v", cfg.Dockers, cfg.DockerManifests)
 	}
 }
@@ -66,7 +66,7 @@ func TestDockerfileRunsAsNonRoot(t *testing.T) {
 	for _, want := range []string{
 		"FROM gcr.io/distroless/static-debian12:nonroot",
 		`LABEL org.opencontainers.image.source="https://github.com/alphabravo-oss/astronomer-tui"`,
-		`LABEL org.opencontainers.image.licenses="MIT"`,
+		`LABEL org.opencontainers.image.licenses="Apache-2.0"`,
 		"USER nonroot:nonroot",
 		`ENTRYPOINT ["/usr/local/bin/astrotui"]`,
 	} {
@@ -115,6 +115,7 @@ func TestREADMEHasInstallQuickstartAndScreenshot(t *testing.T) {
 	for _, want := range []string{
 		"curl -fsSL https://raw.githubusercontent.com/alphabravo-oss/astronomer-tui/main/install.sh | sh",
 		"./bin/astrotui --context kind-kind",
+		"ghcr.io/alphabravo-oss/astrotui:<version>",
 		"docs/screenshots/astrotui-main.svg",
 	} {
 		if !strings.Contains(text, want) {

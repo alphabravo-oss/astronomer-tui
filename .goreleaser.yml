@@ -28,19 +28,19 @@ signs:
     artifacts: checksum
 dockers:
   - image_templates:
-      - ghcr.io/alphabravo-oss/astronomer-tui:{{ .Version }}-amd64
+      - ghcr.io/alphabravo-oss/astrotui:{{ .Version }}-amd64
     dockerfile: Dockerfile
     use: buildx
     goos: linux
     goarch: amd64
   - image_templates:
-      - ghcr.io/alphabravo-oss/astronomer-tui:{{ .Version }}-arm64
+      - ghcr.io/alphabravo-oss/astrotui:{{ .Version }}-arm64
     dockerfile: Dockerfile
     use: buildx
     goos: linux
     goarch: arm64
 docker_manifests:
-  - name_template: ghcr.io/alphabravo-oss/astronomer-tui:{{ .Version }}
+  - name_template: ghcr.io/alphabravo-oss/astrotui:{{ .Version }}
     image_templates:
-      - ghcr.io/alphabravo-oss/astronomer-tui:{{ .Version }}-amd64
-      - ghcr.io/alphabravo-oss/astronomer-tui:{{ .Version }}-arm64
+      - ghcr.io/alphabravo-oss/astrotui:{{ .Version }}-amd64
+      - ghcr.io/alphabravo-oss/astrotui:{{ .Version }}-arm64
