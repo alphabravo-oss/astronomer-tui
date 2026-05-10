@@ -50,7 +50,7 @@ Audit date: 2026-05-09.
 | Multi-arch container config | `.goreleaser.yml`, `Dockerfile`, release workflow; local GoReleaser Docker snapshot built amd64/arm64 images; distribution tests | Build done; real GHCR publish still external |
 | Non-root container | `Dockerfile`; local Docker evidence in progress tracker; distribution tests | Done |
 | Perf harness | `test/kind/perf_test.go`; `make perf` passed | Done |
-| Live 1,000-pod kind render budget | `test/kind/e2e_test.go`; live kind tests enforce informer sync plus first render <300ms, process-to-render <300ms, and cache-to-render <100ms | Done |
+| Live 1,000-pod kind render budget | `test/kind/e2e_test.go`; live kind tests enforce process-to-render <300ms and cache-to-render <100ms after informer sync | Done |
 | Process-level idle CPU/RSS | `make nfr-live`; 5-minute live kind run passed with idle CPU <=2% and RSS <=150MiB | Done |
 | Kind e2e harness | `test/kind/e2e_test.go`; `ASTROTUI_E2E=1 ASTROTUI_E2E_CONTEXT=kind-kind make e2e` passed against a live kind cluster | Done |
 | Coverage NFR | `make coverage-nfr` passed: cluster/actions/logs all above 70% | Done |

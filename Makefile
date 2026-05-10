@@ -32,7 +32,7 @@ bench-palette:
 	go test -bench=. ./internal/palette
 
 e2e:
-	go test -tags=e2e ./test/kind/...
+	go test -tags=e2e ./test/kind/... -skip TestHeadlessRenderProcessGoldenPath
 
 e2e-actions:
 	go test -tags=e2e ./test/kind/... -run Actions

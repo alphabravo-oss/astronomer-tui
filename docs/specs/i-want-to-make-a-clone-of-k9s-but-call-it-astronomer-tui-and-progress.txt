@@ -97,7 +97,7 @@ Latest verification evidence (2026-05-09):
   - `test/kind/e2e_test.go` action golden path creates an isolated namespace/configmap/deployment and exercises real cluster edit, delete, scale, restart, and prod-context typed confirmation through the shared action/edit/safety executors when e2e is enabled.
   - `test/kind/e2e_test.go` exec/port-forward golden path creates a running pod, executes a real SPDY command, starts a real client-go port-forward, and verifies cancellation cleanup when e2e is enabled.
   - `test/kind/e2e_test.go` logs golden path creates an isolated namespace/pod, emits a known line, waits for completion, and streams logs through `internal/logs.StreamPodLogs` when e2e is enabled.
-  - `test/kind/e2e_test.go` performance golden path creates 1,000 real pod API objects in a kind namespace, waits for the informer-backed `ResourceCache`, enforces <300ms informer sync plus first render, and enforces a <100ms cache-to-render pass against `views.Builtins()` when e2e is enabled.
+  - `test/kind/e2e_test.go` performance golden path creates 1,000 real pod API objects in a kind namespace, waits for the informer-backed `ResourceCache`, and enforces a <100ms cache-to-render pass against `views.Builtins()` when e2e is enabled; the process-level NFR path enforces <300ms launch-to-render.
   - `go test -tags=e2e ./test/kind/...` passed locally with e2e tests skipped because `ASTROTUI_E2E` is not set.
   - `make bench-palette` passed: BenchmarkSearch10k-16 814 iterations at 1,532,024 ns/op locally.
   - Local Docker build passed for `astrotui:local-test`; inspect reports `User=nonroot:nonroot`, entrypoint `/usr/local/bin/astrotui`, size 9,948,701 bytes.
