@@ -18,6 +18,8 @@ import (
 	"github.com/alphabravo-oss/astrotui/internal/ui"
 	"github.com/alphabravo-oss/astrotui/internal/ui/theme"
 	"github.com/alphabravo-oss/astrotui/internal/ui/views"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -136,17 +138,15 @@ func run(args []string) int {
 
 func runHeadlessRender(ctx context.Context, kube *cluster.Client, minRows int, idle time.Duration, started time.Time) int {
 	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
-	cache := cluster.NewResourceCache(kube.Dynamic, 0)
-	cache.Start(ctx)
-	if !cache.WaitForSync(ctx, gvr) {
-		fmt.Fprintln(os.Stderr, "failed to sync pod informer")
+	renderStart := time.Now()
+	list, err := kube.Dynamic.Resource(gvr).Namespace(kube.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to list pods: %v\n", err)
 		return 1
 	}
-	renderStart := time.Now()
-	items, err := cache.List(gvr, kube.Namespace, labels.Everything())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list cached pods: %v\n", err)
-		return 1
+	items := make([]*unstructured.Unstructured, len(list.Items))
+	for i := range list.Items {
+		items[i] = &list.Items[i]
 	}
 	rows, _ := ui.BuildRows(views.Builtins()[gvr], items, "", 0, false)
 	renderElapsed := time.Since(renderStart)
@@ -158,6 +158,16 @@ func runHeadlessRender(ctx context.Context, kube *cluster.Client, minRows int, i
 	idleCPU := time.Duration(0)
 	rssBytes := maxRSSBytes()
 	if idle > 0 {
+		cache := cluster.NewResourceCache(kube.Dynamic, 0)
+		cache.Start(ctx)
+		if !cache.WaitForSync(ctx, gvr) {
+			fmt.Fprintln(os.Stderr, "failed to sync pod informer")
+			return 1
+		}
+		if _, err := cache.List(gvr, kube.Namespace, labels.Everything()); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to list cached pods: %v\n", err)
+			return 1
+		}
 		before := processCPUTime()
 		time.Sleep(idle)
 		idleCPU = processCPUTime() - before
