@@ -138,7 +138,6 @@ func run(args []string) int {
 
 func runHeadlessRender(ctx context.Context, kube *cluster.Client, minRows int, idle time.Duration, started time.Time) int {
 	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
-	renderStart := time.Now()
 	list, err := kube.Dynamic.Resource(gvr).Namespace(kube.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list pods: %v\n", err)
@@ -148,6 +147,7 @@ func runHeadlessRender(ctx context.Context, kube *cluster.Client, minRows int, i
 	for i := range list.Items {
 		items[i] = &list.Items[i]
 	}
+	renderStart := time.Now()
 	rows, _ := ui.BuildRows(views.Builtins()[gvr], items, "", 0, false)
 	renderElapsed := time.Since(renderStart)
 	totalElapsed := time.Since(started)
