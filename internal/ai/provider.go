@@ -168,7 +168,7 @@ func (h HTTPProvider) anthropicStream(ctx context.Context, req Request) (<-chan 
 		return nil, err
 	}
 	body := map[string]any{
-		"model":      h.model("claude-3-5-sonnet-latest"),
+		"model":      h.model("claude-opus-4-8"),
 		"max_tokens": 2048,
 		"stream":     true,
 		"system":     anthropicSystem(req.System),
@@ -376,7 +376,7 @@ func (h HTTPProvider) anthropic(ctx context.Context, req Request) (Response, err
 		return Response{}, err
 	}
 	body := map[string]any{
-		"model":      h.model("claude-3-5-sonnet-latest"),
+		"model":      h.model("claude-opus-4-8"),
 		"max_tokens": 2048,
 		"system":     anthropicSystem(req.System),
 		"messages": []map[string]string{{
@@ -506,7 +506,7 @@ func checkStatus(resp *http.Response) error {
 func defaultModel(provider string) string {
 	switch provider {
 	case "anthropic":
-		return "claude-3-5-sonnet-latest"
+		return "claude-opus-4-8"
 	case "openai":
 		return "gpt-4o-mini"
 	case "ollama":

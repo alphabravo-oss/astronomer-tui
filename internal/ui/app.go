@@ -57,6 +57,7 @@ type Options struct {
 	PortForwardRun func(context.Context, actions.PortForwardSpec) error
 	AIProvider     ai.LLMProvider
 	LogStreamer    func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
+	Version        string
 }
 
 type App struct {
@@ -164,7 +165,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		return event
 	})
-	a.app.SetRoot(a.table, true)
+	a.showSplash(ctx)
 	err := a.app.Run()
 	if a.options.SessionStore != nil {
 		_ = a.options.SessionStore.Save(a.sessionState())
@@ -273,15 +274,15 @@ func (a *App) applySkinUpdate(skin uitheme.Skin) {
 	a.updateTitle()
 }
 
-func (a *App) refresh(gvr schema.GroupVersionResource, renderer views.Renderer) {
+func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr schema.GroupVersionResource, renderer views.Renderer) {
 	a.mu.RLock()
 	current := a.currentGVR
 	a.mu.RUnlock()
 	if current != gvr {
 		return
 	}
-	namespace := a.namespaceFor(gvr)
-	items, err := a.cache.List(gvr, namespace, labels.Everything())
+	namespace := namespaceFor(client, gvr)
+	items, err := cache.List(gvr, namespace, labels.Everything())
 	if err != nil {
 		return
 	}
@@ -341,19 +342,21 @@ func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResourc
 	a.filter = ""
 	a.sortCol = 0
 	a.sortDesc = false
+	cache := a.cache
+	client := a.options.Client
 	a.mu.Unlock()
-	a.cache.Ensure(gvr)
+	cache.Ensure(gvr)
 	a.drawHeader(renderer)
-	events := a.cache.Subscribe(gvr)
+	events := cache.Subscribe(gvr)
 	go func() {
-		a.cache.WaitForSync(watchCtx, gvr)
-		a.refresh(gvr, renderer)
+		cache.WaitForSync(watchCtx, gvr)
+		a.refresh(cache, client, gvr, renderer)
 		for {
 			select {
 			case <-watchCtx.Done():
 				return
 			case <-events:
-				a.refresh(gvr, renderer)
+				a.refresh(cache, client, gvr, renderer)
 			}
 		}
 	}()
@@ -469,10 +472,7 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 			return a.switchResource(context.Background(), gvr)
 		}
 		if obj, ok := entry.Payload.(*unstructured.Unstructured); ok {
-			a.mu.Lock()
-			a.visibleObjects = []*unstructured.Unstructured{obj}
-			a.mu.Unlock()
-			a.showDetail()
+			a.showDetailFor(obj)
 			return true
 		}
 	case palette.Namespaces:
@@ -709,10 +709,17 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 		a.showMessage("Context switch failed", err.Error())
 		return false
 	}
+	newCache := cluster.NewResourceCache(client.Dynamic, 30*time.Minute)
+	newCache.Start(ctx)
+	a.mu.Lock()
+	if a.resourceCancel != nil {
+		a.resourceCancel()
+		a.resourceCancel = nil
+	}
 	a.options.Client = client
-	a.cache = cluster.NewResourceCache(client.Dynamic, 30*time.Minute)
-	a.cache.Start(ctx)
+	a.cache = newCache
 	gvr := a.currentGVR
+	a.mu.Unlock()
 	if gvr.Resource == "" {
 		gvr = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 	}
@@ -1864,7 +1871,10 @@ func (a *App) renderCurrent() {
 }
 
 func (a *App) showDetail() {
-	obj := a.selectedObject()
+	a.showDetailFor(a.selectedObject())
+}
+
+func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 	if obj == nil || a.renderer == nil {
 		return
 	}
@@ -2015,11 +2025,14 @@ func (a *App) namespaceNames() []string {
 	return out
 }
 
-func (a *App) namespaceFor(gvr schema.GroupVersionResource) string {
+func namespaceFor(client *cluster.Client, gvr schema.GroupVersionResource) string {
 	if clusterScoped(gvr.Resource) {
 		return ""
 	}
-	return a.options.Client.Namespace
+	if client == nil {
+		return ""
+	}
+	return client.Namespace
 }
 
 func HelpText(catalog []actions.Action) string {

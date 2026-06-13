@@ -128,6 +128,7 @@ func run(args []string) int {
 		Skin:         skin,
 		SkinUpdates:  theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
 		AIProvider:   aiProvider,
+		Version:      version,
 	})
 	if err := app.Run(appCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
