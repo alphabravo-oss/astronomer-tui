@@ -358,11 +358,14 @@ func (a *App) logStreamer() func(context.Context, logs.PodLogTarget, logs.Reques
 	if a.options.LogStreamer != nil {
 		return a.options.LogStreamer
 	}
+	a.mu.RLock()
+	client := a.options.Client
+	a.mu.RUnlock()
 	return func(ctx context.Context, target logs.PodLogTarget, opts logs.RequestOptions, writer io.Writer) error {
-		if a.options.Client == nil || a.options.Client.Clientset == nil {
+		if client == nil || client.Clientset == nil {
 			return fmt.Errorf("kubernetes clientset is required for log streaming")
 		}
-		return logs.StreamPodLogs(ctx, a.options.Client.Clientset, target, opts, writer)
+		return logs.StreamPodLogs(ctx, client.Clientset, target, opts, writer)
 	}
 }
 
