@@ -78,9 +78,8 @@ func Command(plan CommandPlan) *exec.Cmd {
 func expand(input string, vars map[string]string) string {
 	out := input
 	keys := make([]string, 0, len(vars))
-	for key, value := range vars {
+	for key := range vars {
 		keys = append(keys, key)
-		_ = value
 	}
 	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
 	for _, key := range keys {

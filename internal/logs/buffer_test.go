@@ -51,10 +51,10 @@ func TestBufferFilterRegexAndSave(t *testing.T) {
 	}
 }
 
-func TestMergerAssignsStablePodColor(t *testing.T) {
-	merger := NewMerger(10)
-	merger.Add(StreamEvent{Pod: "api-1", Line: "hello", Time: time.Unix(1, 0)})
-	entries := merger.Buffer().Entries()
+func TestBufferAssignsStablePodColor(t *testing.T) {
+	buffer := NewBuffer(10)
+	buffer.Append("api-1", "hello", time.Unix(1, 0))
+	entries := buffer.Entries()
 	if len(entries) != 1 || entries[0].Color != StableColorIndex("api-1") {
 		t.Fatalf("unexpected entries %#v", entries)
 	}

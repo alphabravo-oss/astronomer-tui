@@ -273,7 +273,7 @@ func field(obj map[string]any, name string) string {
 			return fmt.Sprintf("%d", total)
 		}
 	case "DESIRED", "REPLICAS":
-		return firstInt(obj, []string{"status", "desiredNumberScheduled"}, []string{"spec", "replicas"}, []string{"status", "replicas"})
+		return firstInt(obj, []string{"status", "desiredNumberScheduled"}, []string{"spec", "replicas"}, []string{"status", "replicas"}, []string{"status", "currentReplicas"})
 	case "CURRENT":
 		return firstInt(obj, []string{"status", "currentNumberScheduled"}, []string{"status", "replicas"})
 	case "AVAILABLE":
@@ -379,7 +379,7 @@ func field(obj map[string]any, name string) string {
 	case "PV":
 		return nestedString(obj, "spec", "source", "persistentVolumeName")
 	case "NODE":
-		return firstString(obj, []string{"spec", "nodeName"}, []string{"spec", "nodeName"})
+		return nestedString(obj, "spec", "nodeName")
 	case "ATTACHED":
 		if v, ok, _ := unstructured.NestedBool(obj, "status", "attached"); ok {
 			return fmt.Sprintf("%t", v)

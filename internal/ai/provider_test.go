@@ -14,7 +14,7 @@ import (
 )
 
 func TestMockProvider(t *testing.T) {
-	resp, err := ExplainFailure(context.Background(), MockProvider{Response: "fix image tag"}, "spec", "status", "events")
+	resp, err := MockProvider{Response: "fix image tag"}.Complete(context.Background(), FailureRequest("spec", "status", "events"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func hasAnthropicCacheControl(system []map[string]any) bool {
 
 func TestStreamingFeatureHelpers(t *testing.T) {
 	provider := &streamProvider{chunks: []Chunk{{Text: "one"}, {Text: " two"}, {Done: true}}}
-	chunks, err := StreamManifest(context.Background(), provider, "kind: Pod")
+	chunks, err := provider.Stream(context.Background(), ManifestRequest("kind: Pod"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestLogQuestionRequestIncludesContextAndQuestion(t *testing.T) {
 
 func TestStreamingFeatureHelperError(t *testing.T) {
 	provider := &streamProvider{err: errors.New("boom")}
-	if _, err := StreamLogSummary(context.Background(), provider, "logs"); err == nil {
+	if _, err := provider.Stream(context.Background(), LogSummaryRequest("logs")); err == nil {
 		t.Fatal("expected stream error")
 	}
 }

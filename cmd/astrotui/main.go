@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -65,11 +64,6 @@ func run(args []string) int {
 
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
-		var validation *config.ValidationError
-		if errors.As(err, &validation) {
-			fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
-			return exConfig
-		}
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		return exConfig
 	}

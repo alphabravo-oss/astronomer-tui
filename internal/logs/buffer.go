@@ -123,25 +123,3 @@ func FormatEntry(entry Entry, prefixPod bool) string {
 	}
 	return line
 }
-
-type StreamEvent struct {
-	Pod  string
-	Line string
-	Time time.Time
-}
-
-type Merger struct {
-	buffer *Buffer
-}
-
-func NewMerger(limit int) *Merger {
-	return &Merger{buffer: NewBuffer(limit)}
-}
-
-func (m *Merger) Add(event StreamEvent) {
-	m.buffer.Append(event.Pod, event.Line, event.Time)
-}
-
-func (m *Merger) Buffer() *Buffer {
-	return m.buffer
-}
