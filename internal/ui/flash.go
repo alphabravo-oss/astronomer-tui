@@ -43,7 +43,7 @@ var (
 func (a *App) Flash(level FlashLevel, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	recordFlash(level, msg)
-	if a.app == nil || a.flashView == nil {
+	if a.app == nil || a.flashView == nil || !a.isRunning() {
 		return
 	}
 	a.app.QueueUpdateDraw(func() { a.renderFlash(level, msg) })

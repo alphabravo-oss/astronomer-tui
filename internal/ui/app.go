@@ -89,6 +89,15 @@ type App struct {
 	tableStack       []tableState
 	marks            map[string]struct{}
 	lastMarkRow      int
+	running          bool
+}
+
+// isRunning reports whether the tview event loop is active, so background
+// helpers know whether QueueUpdateDraw will be drained.
+func (a *App) isRunning() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.running
 }
 
 // markCount returns the number of marked rows.
@@ -187,8 +196,14 @@ func (a *App) Run(ctx context.Context) error {
 	if a.options.MetricsPoller != nil {
 		a.startMetrics(ctx, a.options.MetricsPoller)
 	}
+	a.mu.Lock()
+	a.running = true
+	a.mu.Unlock()
 	a.showSplash(ctx)
 	err := a.app.Run()
+	a.mu.Lock()
+	a.running = false
+	a.mu.Unlock()
 	if a.options.SessionStore != nil {
 		_ = a.options.SessionStore.Save(a.sessionState())
 	}
@@ -213,6 +228,9 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(runeBinding('/', "filter", "Filter visible rows", "table", true, wrap(a.showFilter)))
 	k.Add(runeBinding(':', "command", "Command prompt", "table", true, wrap(func() { a.showCommand(a.runCtx) })))
 	k.Add(runeBinding('0', "all-namespaces", "Show all namespaces", "table", true, wrap(func() { a.switchNamespace("all") })))
+	k.Add(runeBinding(' ', "mark", "Mark/unmark row for bulk actions", "table", true, wrap(a.toggleMark)))
+	k.Add(keyBinding(tcell.KeyCtrlA, "mark-all", "Mark all visible rows", "table", true, wrap(a.markAllVisible)))
+	k.Add(keyBinding(tcell.KeyCtrlBackslash, "clear-marks", "Clear all marks", "table", true, wrap(a.clearMarks)))
 	k.Add(keyBinding(tcell.KeyCtrlP, "palette", "Command palette", "global", true, wrap(a.showPalette)))
 	k.Add(keyBinding(tcell.KeyCtrlE, "ai-explain", "AI explain selection", "global", true, wrap(a.showFailureAI)))
 	k.Add(runeBinding('?', "help", "Show this overlay", "global", true, wrap(a.showHelp)))
@@ -403,11 +421,16 @@ func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell, visible []
 	gvr := renderer.GVR()
 	for row, cells := range rows {
 		rowColor := ""
+		marked := false
 		if row < len(visible) {
 			rowColor = views.StateColor(gvr, visible[row])
+			marked = a.isMarked(objectKey(visible[row]))
 		}
 		for col, cell := range cells {
-			if cell.Color == "" {
+			if col == 0 && marked {
+				cell.Text = markGlyph + " " + cell.Text
+				cell.Color = "accent"
+			} else if cell.Color == "" {
 				cell.Color = rowColor
 			}
 			a.setTableCell(row+1, col, cell)
@@ -509,6 +532,7 @@ func (a *App) switchResourceScoped(ctx context.Context, gvr schema.GroupVersionR
 	a.sortDesc = false
 	a.labelSelector = scope.selector
 	a.drillNodeName = scope.nodeName
+	a.marks = nil
 	cache := a.cache
 	client := a.options.Client
 	a.mu.Unlock()
@@ -862,6 +886,10 @@ func (a *App) semanticColor(name string) tcell.Color {
 }
 
 func (a *App) showDelete() {
+	if marked := a.markedObjects(); len(marked) > 1 {
+		a.showBulkDelete(marked)
+		return
+	}
 	obj := a.selectedObject()
 	if obj == nil || a.renderer == nil {
 		return
