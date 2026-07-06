@@ -42,14 +42,16 @@ func (a *App) showPalette() {
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			if entry, ok := entriesByRow[list.GetCurrentItem()]; ok {
+				a.closeModal()
 				a.executePaletteEntry(entry)
 				return
 			}
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
 	list.SetSelectedFunc(func(row int, _ string, _ string, _ rune) {
 		if entry, ok := entriesByRow[row]; ok {
+			a.closeModal()
 			a.executePaletteEntry(entry)
 		}
 	})
@@ -58,14 +60,8 @@ func (a *App) showPalette() {
 		AddItem(input, 1, 0, true).
 		AddItem(list, 0, 1, false)
 	flex.SetTitle(" Palette ").SetBorder(true)
-	flex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
-			return nil
-		}
-		return event
-	})
-	a.app.SetRoot(flex, true).SetFocus(input)
+	a.showModal(flex)
+	a.app.SetFocus(input)
 }
 
 func populatePaletteList(list *tview.List, matches []palette.Match, execute func(palette.Entry) bool) map[int]palette.Entry {
@@ -220,12 +216,13 @@ func (a *App) showPluginConfirm(name string, plan plugins.CommandPlan) {
 		AddButtons([]string{"Run", "Cancel"}).
 		SetDoneFunc(func(index int, _ string) {
 			if index == 0 {
+				a.closeModal()
 				a.runPluginPlan(name, plan)
 				return
 			}
-			a.app.SetRoot(a.table, true)
+			a.closeModal()
 		})
-	a.app.SetRoot(modal, false)
+	a.showModal(modal)
 }
 
 func (a *App) runPluginPlan(name string, plan plugins.CommandPlan) {

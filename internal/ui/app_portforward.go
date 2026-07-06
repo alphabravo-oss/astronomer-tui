@@ -36,9 +36,9 @@ func (a *App) showPortForwardPlan() {
 			a.startPortForwardSpec(updated)
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) defaultPortForwardSpec() (actions.PortForwardSpec, bool) {
@@ -125,8 +125,8 @@ func (a *App) showPortForwardManager() {
 	renderPortForwardRows(table, manager.List())
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc || event.Rune() == 'q':
-			a.app.SetRoot(a.table, true)
+		case event.Rune() == 'q':
+			a.back()
 			return nil
 		case event.Key() == tcell.KeyCtrlK || event.Rune() == 'k' || event.Rune() == 'd':
 			if killSelectedPortForward(table, manager) {
@@ -136,7 +136,7 @@ func (a *App) showPortForwardManager() {
 		}
 		return event
 	})
-	a.app.SetRoot(table, true)
+	a.pushView(table, table, "port-forwards", nil)
 }
 
 func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {

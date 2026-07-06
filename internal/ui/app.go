@@ -57,6 +57,11 @@ type App struct {
 	options          Options
 	app              *tview.Application
 	table            *tview.Table
+	nav              *Nav
+	pages            *tview.Pages
+	header           *tview.TextView
+	crumbsView       *tview.TextView
+	flashView        *tview.TextView
 	cache            *cluster.ResourceCache
 	currentGVR       schema.GroupVersionResource
 	objects          []*unstructured.Unstructured
@@ -73,20 +78,38 @@ type App struct {
 	clusterScopedDyn map[schema.GroupVersionResource]bool
 	crdRenderers     map[schema.GroupVersionResource]views.Renderer
 	metrics          metricsSnapshotter
+	flashClear       *time.Timer
 }
 
 func New(options Options) *App {
 	pluginFile, _ := plugins.LoadMerged(pluginPaths(options.PluginPaths)...)
+	tapp := tview.NewApplication()
+	pages := tview.NewPages()
 	app := &App{
 		options:    options,
-		app:        tview.NewApplication(),
+		app:        tapp,
 		table:      tview.NewTable().SetSelectable(true, false),
+		pages:      pages,
+		header:     tview.NewTextView().SetDynamicColors(true),
+		crumbsView: tview.NewTextView().SetDynamicColors(true),
+		flashView:  tview.NewTextView().SetDynamicColors(true),
+		nav:        newNav(tapp, pages),
 		crashes:    CrashReporter{Dir: DefaultCrashDir()},
 		pluginFile: pluginFile,
 		skin:       resolveSkin(options),
 	}
 	app.applySkin()
 	return app
+}
+
+// rootLayout composes the persistent chrome (header, crumbs, flash) around the
+// navigation pages.
+func (a *App) rootLayout() tview.Primitive {
+	return tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.header, 1, 0, false).
+		AddItem(a.pages, 0, 1, true).
+		AddItem(a.crumbsView, 1, 0, false).
+		AddItem(a.flashView, 1, 0, false)
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -173,6 +196,16 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		return event
 	})
+	a.nav.SetRootView(a.table, "")
+	a.app.SetRoot(a.rootLayout(), true)
+	a.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape {
+			a.safe(a.handleEsc)
+			return nil
+		}
+		return event
+	})
+	a.updateChrome()
 	a.showSplash(ctx)
 	err := a.app.Run()
 	if a.options.SessionStore != nil {
@@ -446,8 +479,8 @@ func (a *App) showHelp() {
 	modal := tview.NewModal().
 		SetText(HelpText(a.actionCatalog())).
 		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(_ int, _ string) { a.app.SetRoot(a.table, true) })
-	a.app.SetRoot(modal, false)
+		SetDoneFunc(func(_ int, _ string) { a.closeModal() })
+	a.showModal(modal)
 }
 
 func (a *App) showFilter() {
@@ -467,9 +500,9 @@ func (a *App) showFilter() {
 				a.renderCurrent()
 			}
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) showCommand(ctx context.Context) {
@@ -511,9 +544,9 @@ func (a *App) showCommand(ctx context.Context) {
 				return
 			}
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) switchNamespace(namespace string) {
@@ -586,7 +619,8 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	if !a.switchResource(ctx, gvr) {
 		return false
 	}
-	a.app.SetRoot(a.table, true)
+	a.nav.ResetToRoot()
+	a.updateChrome()
 	return true
 }
 
@@ -670,9 +704,9 @@ func (a *App) showEdit() {
 				a.confirmEdit(obj, input.GetText())
 				return
 			}
-			a.app.SetRoot(a.table, true)
+			a.closeModal()
 		})
-		a.app.SetRoot(input, true)
+		a.showModal(input)
 		return
 	}
 	a.confirmEdit(obj, "")
@@ -727,9 +761,9 @@ func (a *App) showTypedDelete(req actions.Request) {
 			a.confirmDelete(req, input.GetText())
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) confirmDelete(req actions.Request, confirmText string) {
@@ -760,9 +794,9 @@ func (a *App) showScale() {
 			a.runAction(req, "Scaled", "Scale failed")
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) showRestart() {
@@ -800,9 +834,9 @@ func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitl
 			a.runAction(req, successTitle, failureTitle)
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) runAction(req actions.Request, successTitle, failureTitle string) {
@@ -824,9 +858,9 @@ func (a *App) showMessage(title, body string) {
 	modal := tview.NewModal().
 		SetText(body).
 		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(_ int, _ string) { a.app.SetRoot(a.table, true) })
+		SetDoneFunc(func(_ int, _ string) { a.closeModal() })
 	modal.SetTitle(" " + title + " ")
-	a.app.SetRoot(modal, false)
+	a.showModal(modal)
 }
 
 func (a *App) safe(fn func()) bool {
@@ -1019,8 +1053,8 @@ func (a *App) showDetailContent(detail views.DetailContent) {
 		SetText(detail.Body)
 	view.SetTitle(" " + detail.Title + " ").SetBorder(true)
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Rune() == 'q' {
+			a.back()
 			return nil
 		}
 		if event.Key() == tcell.KeyCtrlE || event.Rune() == 'a' {
@@ -1029,7 +1063,7 @@ func (a *App) showDetailContent(detail views.DetailContent) {
 		}
 		return event
 	})
-	a.app.SetRoot(view, true)
+	a.pushView(view, view, detail.Title, nil)
 }
 
 func (a *App) namespaceNames() []string {

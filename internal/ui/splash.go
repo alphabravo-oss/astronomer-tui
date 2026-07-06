@@ -29,7 +29,7 @@ func (a *App) showSplash(ctx context.Context) {
 		dismiss()
 		return nil
 	})
-	a.app.SetRoot(view, true).SetFocus(view)
+	a.showModalFullscreen(view)
 	go func() {
 		select {
 		case <-time.After(splashDuration):
@@ -44,7 +44,7 @@ func (a *App) showSplash(ctx context.Context) {
 func (a *App) splashDismisser() func() {
 	var once sync.Once
 	return func() {
-		once.Do(func() { a.app.SetRoot(a.table, true).SetFocus(a.table) })
+		once.Do(func() { a.closeModal() })
 	}
 }
 

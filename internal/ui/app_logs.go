@@ -60,9 +60,8 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 	}
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc || event.Rune() == 'q':
-			cancel()
-			a.app.SetRoot(a.table, true)
+		case event.Rune() == 'q':
+			a.back()
 			return nil
 		case event.Rune() == '/':
 			a.showLogFilter(view, buffer, &filter)
@@ -111,7 +110,7 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 		}
 		return event
 	})
-	a.app.SetRoot(view, true)
+	a.pushView(view, view, "logs", cancel)
 }
 
 func (a *App) jumpLogEvents(view *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -121,7 +120,7 @@ func (a *App) jumpLogEvents(view *tview.TextView, buffer *logs.Buffer, filter st
 		return
 	}
 	a.switchResourceFiltered(context.Background(), schema.GroupVersionResource{Version: "v1", Resource: "events"}, entry.Pod)
-	a.app.SetRoot(a.table, true)
+	a.back()
 }
 
 func (a *App) jumpLogOwner(ctx context.Context, view *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -146,7 +145,7 @@ func (a *App) jumpLogOwner(ctx context.Context, view *tview.TextView, buffer *lo
 		return
 	}
 	a.switchResourceFiltered(ctx, gvr, owner.Name)
-	a.app.SetRoot(a.table, true)
+	a.back()
 }
 
 func (a *App) switchResourceFiltered(ctx context.Context, gvr schema.GroupVersionResource, filter string) bool {
@@ -225,18 +224,19 @@ func (a *App) showLogContainerPicker(pod corev1.Pod) {
 	for _, container := range logs.ContainerNames(pod) {
 		container := container
 		list.AddItem(container, "", 0, func() {
+			a.closeModal()
 			a.showLogsView([]logs.PodLogTarget{logTargetForPodContainer(pod, container)})
 		})
 	}
 	list.SetTitle(" Select log container ").SetBorder(true)
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Rune() == 'q' {
+			a.closeModal()
 			return nil
 		}
 		return event
 	})
-	a.app.SetRoot(list, true)
+	a.showModal(list)
 }
 
 func logTargetForPodContainer(pod corev1.Pod, container string) logs.PodLogTarget {
@@ -258,9 +258,9 @@ func (a *App) showLogFilter(view *tview.TextView, buffer *logs.Buffer, filter *s
 			*filter = input.GetText()
 			view.SetText(renderLogEntries(buffer.Filter(*filter), true))
 		}
-		a.app.SetRoot(view, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) showLogRegex(view *tview.TextView, buffer *logs.Buffer, search *logSearchState) {
@@ -277,9 +277,9 @@ func (a *App) showLogRegex(view *tview.TextView, buffer *logs.Buffer, search *lo
 				view.SetText(fmt.Sprintf("%d matches\n\n%s", len(matches), renderLogEntries(buffer.Entries(), true)))
 			}
 		}
-		a.app.SetRoot(view, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) showLogSave(view *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -297,9 +297,9 @@ func (a *App) showLogSave(view *tview.TextView, buffer *logs.Buffer, filter stri
 				}
 			}
 		}
-		a.app.SetRoot(view, true)
+		a.closeModal()
 	})
-	a.app.SetRoot(input, true)
+	a.showModal(input)
 }
 
 func (a *App) showLogAISummary(view *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -329,29 +329,19 @@ func (a *App) showLogAIChat(logView *tview.TextView, buffer *logs.Buffer, filter
 	output.SetTitle(" AI logs ").SetBorder(true)
 	input := tview.NewInputField().SetLabel("Ask: ").SetFieldWidth(0)
 	input.SetDoneFunc(func(key tcell.Key) {
-		switch key {
-		case tcell.KeyEnter:
+		if key == tcell.KeyEnter {
 			question := strings.TrimSpace(input.GetText())
 			if question == "" {
 				return
 			}
 			input.SetText("")
 			a.streamAIResponse(output, ai.LogQuestionRequest(contextText, question))
-		case tcell.KeyEsc:
-			a.app.SetRoot(logView, true)
 		}
 	})
 	flex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(output, 0, 1, false).
 		AddItem(input, 1, 0, true)
-	flex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(logView, true)
-			return nil
-		}
-		return event
-	})
-	a.app.SetRoot(flex, true)
+	a.pushView(flex, input, "ai:logs", nil)
 }
 
 func (a *App) logStreamer() func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error {

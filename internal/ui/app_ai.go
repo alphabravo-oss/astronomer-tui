@@ -38,13 +38,13 @@ func (a *App) showFailureAI() {
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetText("Asking AI...")
 	view.SetTitle(" AI failure analysis ").SetBorder(true)
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Rune() == 'q' {
+			a.back()
 			return nil
 		}
 		return event
 	})
-	a.app.SetRoot(view, true)
+	a.pushView(view, view, "ai:failure", nil)
 	a.streamAIResponse(view, ai.FailureRequest(spec, status, events))
 }
 

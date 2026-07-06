@@ -22,6 +22,8 @@ func TestShowSplashRendersBanner(t *testing.T) {
 	}
 	defer screen.Fini()
 	app.app.SetScreen(screen)
+	app.nav.SetRootView(app.table, "")
+	app.app.SetRoot(app.rootLayout(), true)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
