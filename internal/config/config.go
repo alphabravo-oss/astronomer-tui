@@ -18,6 +18,23 @@ type Config struct {
 	AI       AIConfig                 `yaml:"ai"`
 	Contexts map[string]ContextConfig `yaml:"contexts"`
 	Theme    string                   `yaml:"theme"`
+	ReadOnly bool                     `yaml:"readOnly"`
+	Metrics  MetricsConfig            `yaml:"metrics"`
+	Logs     LogsConfig               `yaml:"logs"`
+	UI       UIConfig                 `yaml:"ui"`
+}
+
+type MetricsConfig struct {
+	IntervalSeconds int `yaml:"intervalSeconds"`
+}
+
+type LogsConfig struct {
+	TailLines    int64 `yaml:"tailLines"`
+	SinceSeconds int64 `yaml:"sinceSeconds"`
+}
+
+type UIConfig struct {
+	WideDefault bool `yaml:"wideDefault"`
 }
 
 type SafetyConfig struct {

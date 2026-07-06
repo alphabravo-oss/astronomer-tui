@@ -54,6 +54,8 @@ func run(args []string) int {
 	headlessRender := fs.Bool("headless-render", false, "Measure initial resource cache sync and render without starting the TUI")
 	headlessRenderMinRows := fs.Int("headless-render-min-rows", 0, "Minimum rendered rows required by --headless-render")
 	headlessRenderIdle := fs.Duration("headless-render-idle", 0, "Idle after --headless-render and enforce CPU/RSS NFRs over that duration")
+	readOnly := fs.Bool("readonly", false, "Disable all destructive actions (every context read-only)")
+	initialCommand := fs.String("command", "", "Run a command (e.g. \":deploy\") after the first render")
 	if err := fs.Parse(args); err != nil {
 		return exUsage
 	}
@@ -66,6 +68,9 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		return exConfig
+	}
+	if *readOnly {
+		cfg.ReadOnly = true
 	}
 
 	stateStore := session.NewStore(session.DefaultPath())
@@ -115,15 +120,16 @@ func run(args []string) int {
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 	app := ui.New(ui.Options{
-		Client:        kube,
-		Config:        cfg,
-		SessionStore:  stateStore,
-		InitialState:  restored,
-		Skin:          skin,
-		SkinUpdates:   theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
-		AIProvider:    aiProvider,
-		Version:       version,
-		MetricsPoller: cluster.NewMetricsPoller(kube.Dynamic, 0),
+		Client:         kube,
+		Config:         cfg,
+		SessionStore:   stateStore,
+		InitialState:   restored,
+		Skin:           skin,
+		SkinUpdates:    theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
+		AIProvider:     aiProvider,
+		Version:        version,
+		MetricsPoller:  cluster.NewMetricsPoller(kube.Dynamic, time.Duration(cfg.Metrics.IntervalSeconds)*time.Second),
+		InitialCommand: *initialCommand,
 	})
 	if err := app.Run(appCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)

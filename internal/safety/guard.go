@@ -23,6 +23,9 @@ const (
 var ErrReadOnly = errors.New("context is read-only")
 
 func PolicyFor(cfg config.Config, currentContext string) string {
+	if cfg.ReadOnly {
+		return "read-only"
+	}
 	if ctx, ok := cfg.Contexts[currentContext]; ok && ctx.Policy != "" {
 		return ctx.Policy
 	}

@@ -53,6 +53,7 @@ type Options struct {
 	LogStreamer    func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
 	Version        string
 	MetricsPoller  metricsSnapshotter
+	InitialCommand string
 }
 
 type App struct {
@@ -94,6 +95,7 @@ type App struct {
 	wideMode         bool
 	cmdHistory       []string
 	histIdx          int
+	userAliases      map[string]string
 }
 
 // isRunning reports whether the tview event loop is active, so background
@@ -147,9 +149,19 @@ func New(options Options) *App {
 		pluginFile: pluginFile,
 		skin:       resolveSkin(options),
 	}
+	app.wideMode = options.Config.UI.WideDefault
+	app.userAliases = config.LoadAliases(aliasPaths()...)
 	app.table.SetSelectionChangedFunc(func(row, _ int) { app.rememberSelection(row) })
 	app.applySkin()
 	return app
+}
+
+// aliasPaths returns the alias file search order: astrotui dir first, then k9s.
+func aliasPaths() []string {
+	return []string{
+		filepath.Join(config.DefaultDir(), "aliases.yaml"),
+		filepath.Join(config.DefaultK9sDir(), "aliases.yaml"),
+	}
 }
 
 // rootLayout composes the persistent chrome (header, crumbs, flash) around the
@@ -206,6 +218,9 @@ func (a *App) Run(ctx context.Context) error {
 	a.running = true
 	a.mu.Unlock()
 	a.showSplash(ctx)
+	if cmd := strings.TrimSpace(a.options.InitialCommand); cmd != "" {
+		a.runCommandString(ctx, cmd)
+	}
 	err := a.app.Run()
 	a.mu.Lock()
 	a.running = false
@@ -710,7 +725,11 @@ func (a *App) showHelp() {
 // helpOverlayText builds the help overlay from the live keymap registry and
 // command catalog, so it never drifts from the actual bindings.
 func (a *App) helpOverlayText() string {
-	lines := []string{"Keys"}
+	lines := []string{}
+	if safety.PolicyFor(a.options.Config, a.clientContext()) == "read-only" {
+		lines = append(lines, "READ-ONLY MODE — destructive actions are disabled", "")
+	}
+	lines = append(lines, "Keys")
 	if a.tableKeymap != nil {
 		for _, row := range a.tableKeymap.HelpRows() {
 			lines = append(lines, fmt.Sprintf("  %-8s %s", row[0], row[1]))
@@ -806,9 +825,13 @@ func (a *App) runCommandString(ctx context.Context, text string) bool {
 	}
 	switch command.Kind {
 	case "resource":
-		gvr, ok := resourceCommand(command.Value)
+		value := command.Value
+		if target, ok := a.userAliases[value]; ok {
+			value = target
+		}
+		gvr, ok := resourceCommand(value)
 		if !ok {
-			gvr, ok = a.resolveDiscoveryResource(command.Value)
+			gvr, ok = a.resolveDiscoveryResource(value)
 		}
 		if !ok {
 			a.showMessage("Unknown command", ":"+text)

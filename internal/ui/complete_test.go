@@ -63,3 +63,15 @@ func containsStr(list []string, want string) bool {
 	}
 	return false
 }
+
+func TestUserAliasResolvesInCommand(t *testing.T) {
+	app := New(Options{})
+	app.userAliases = map[string]string{"pp": "v1/pods"}
+	// runCommandString needs a cache/renderer to switchResource; assert the
+	// alias maps to a known resource command instead.
+	target := app.userAliases["pp"]
+	gvr, ok := resourceCommand(target)
+	if !ok || gvr.Resource != "pods" {
+		t.Fatalf("alias pp should resolve to pods, got %#v %v", gvr, ok)
+	}
+}

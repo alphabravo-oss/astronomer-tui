@@ -548,11 +548,14 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (a *App) defaultTailLines() int64 {
+	if a.options.Config.Logs.TailLines > 0 {
+		return a.options.Config.Logs.TailLines
+	}
 	return 200
 }
 
 func (a *App) defaultSinceSeconds() int64 {
-	return 0
+	return a.options.Config.Logs.SinceSeconds
 }
 
 func formatLogEntryForView(entry logs.Entry, prefixPod bool) string {
