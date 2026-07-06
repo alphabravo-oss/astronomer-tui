@@ -140,6 +140,88 @@ func (a *App) showAttach() {
 	a.showMessage("Attach", "session ended")
 }
 
+// showCordon toggles a node's schedulable state (c cordon / u uncordon are
+// bound separately but share this with the desired value).
+func (a *App) setCordon(unschedulable bool) {
+	obj := a.selectedObject()
+	if obj == nil || obj.GetKind() != "Node" {
+		a.Flash(FlashInfo, "cordon is only available for nodes")
+		return
+	}
+	name := obj.GetName()
+	if a.options.Client == nil || a.options.Client.Clientset == nil {
+		a.Flash(FlashError, "kubernetes clientset is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := actions.SetNodeSchedulable(ctx, a.options.Client.Clientset, name, unschedulable); err != nil {
+		a.Flash(FlashError, "cordon failed: %s", err.Error())
+		return
+	}
+	if unschedulable {
+		a.Flash(FlashInfo, "cordoned %s", name)
+	} else {
+		a.Flash(FlashInfo, "uncordoned %s", name)
+	}
+}
+
+// showDrain drains the selected node with a progress view. Drain always
+// requires a typed confirmation.
+func (a *App) showDrain() {
+	obj := a.selectedObject()
+	if obj == nil || obj.GetKind() != "Node" {
+		a.Flash(FlashInfo, "drain is only available for nodes")
+		return
+	}
+	name := obj.GetName()
+	ctxName := a.clientContext()
+	if err := safety.Authorize(a.options.Config, ctxName, safety.Delete, ""); err == safety.ErrReadOnly {
+		a.showMessage("Blocked", "context is read-only")
+		return
+	}
+	input := promptField(fmt.Sprintf("Type %s to DRAIN node %s: ", ctxName, name), func(text string) {
+		if text != ctxName {
+			a.showMessage("Blocked", fmt.Sprintf("type the context name %q to confirm drain", ctxName))
+			return
+		}
+		a.closeModal()
+		a.runDrain(name)
+	}, a.closeModal)
+	a.showModal(input)
+}
+
+func (a *App) runDrain(name string) {
+	if a.options.Client == nil || a.options.Client.Clientset == nil {
+		a.Flash(FlashError, "kubernetes clientset is required to drain")
+		return
+	}
+	output := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetText("Draining " + name + "...\n")
+	output.SetTitle(" drain " + name + " ").SetBorder(true)
+	output.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Rune() == 'q' {
+			a.back()
+			return nil
+		}
+		return event
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	a.pushView(output, output, "drain:"+name, cancel)
+	opts := actions.DrainOptions{Timeout: 2 * time.Minute, IgnoreDaemonSets: true}
+	emit := func(line string) {
+		a.app.QueueUpdateDraw(func() { fmt.Fprintln(output, line) })
+	}
+	go func() {
+		res, err := actions.DrainNode(ctx, a.options.Client.Clientset, name, opts, emit)
+		if err != nil {
+			emit("error: " + err.Error())
+			a.Flash(FlashError, "drain %s: %s", name, err.Error())
+			return
+		}
+		a.Flash(FlashInfo, "drained %s: %d evicted, %d skipped", name, res.Evicted, res.Skipped)
+	}()
+}
+
 // showSecretDecode renders a Secret's data with base64 values decoded.
 func (a *App) showSecretDecode() {
 	obj := a.selectedObject()
