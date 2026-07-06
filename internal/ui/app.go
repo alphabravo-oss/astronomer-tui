@@ -841,6 +841,9 @@ func (a *App) runCommandString(ctx context.Context, text string) bool {
 	case "pulses":
 		a.showPulsesView(ctx)
 		return true
+	case "xray":
+		a.showXrayView(ctx, command.Value)
+		return true
 	case "rbac":
 		a.showRBACView(ctx, command.Value)
 		return true

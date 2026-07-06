@@ -31,6 +31,7 @@ func commandCatalog() []commandSpec {
 		{usage: ":all", help: "Show all namespaces"},
 		{usage: ":pf", help: "Port-forward manager"},
 		{usage: ":pulses", help: "Cluster health tiles"},
+		{usage: ":xray <kind>", help: "Dependency tree (deploy/sts/ds)"},
 		{usage: ":rbac u:|g:|s:", help: "Aggregate a subject's RBAC rules"},
 		{usage: ":can <verb> <res>", help: "Check access (SelfSubjectAccessReview)"},
 		{usage: ":alias", help: "List aliases and commands"},
@@ -92,6 +93,11 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "pulses"}, true
+	case "xray":
+		if len(parts) != 2 {
+			return Command{}, false
+		}
+		return Command{Kind: "xray", Value: parts[1]}, true
 	case "rbac":
 		if len(parts) != 2 {
 			return Command{}, false
