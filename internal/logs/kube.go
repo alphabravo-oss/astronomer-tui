@@ -20,9 +20,11 @@ type PodLogTarget struct {
 }
 
 type RequestOptions struct {
-	TailLines *int64
-	Follow    bool
-	Previous  bool
+	TailLines    *int64
+	SinceSeconds *int64
+	Follow       bool
+	Previous     bool
+	Timestamps   bool
 }
 
 func ContainerNames(pod corev1.Pod) []string {
@@ -63,10 +65,12 @@ func PodsForSelector(ctx context.Context, client kubernetes.Interface, namespace
 
 func StreamPodLogs(ctx context.Context, client kubernetes.Interface, target PodLogTarget, opts RequestOptions, writer io.Writer) error {
 	request := &corev1.PodLogOptions{
-		Container: target.Container,
-		Follow:    opts.Follow,
-		Previous:  opts.Previous,
-		TailLines: opts.TailLines,
+		Container:    target.Container,
+		Follow:       opts.Follow,
+		Previous:     opts.Previous,
+		TailLines:    opts.TailLines,
+		SinceSeconds: opts.SinceSeconds,
+		Timestamps:   opts.Timestamps,
 	}
 	stream, err := client.CoreV1().Pods(target.Namespace).GetLogs(target.Pod, request).Stream(ctx)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,33 +32,97 @@ func (a *App) showLogsPlan() {
 	a.showLogsView(targets)
 }
 
+// logViewState holds the mutable streaming options for a log view.
+type logViewState struct {
+	previous     bool
+	timestamps   bool
+	autoscroll   bool
+	pretty       bool
+	sinceSeconds int64 // 0 = all history
+	tail         int64
+}
+
+func (s *logViewState) options() logs.RequestOptions {
+	opts := logs.RequestOptions{Follow: true, Previous: s.previous, Timestamps: s.timestamps}
+	if s.tail > 0 {
+		tail := s.tail
+		opts.TailLines = &tail
+	}
+	if s.sinceSeconds > 0 {
+		since := s.sinceSeconds
+		opts.SinceSeconds = &since
+	}
+	return opts
+}
+
+func (s *logViewState) title() string {
+	scroll := "follow"
+	if !s.autoscroll {
+		scroll = "paused"
+	}
+	since := "all"
+	if s.sinceSeconds > 0 {
+		since = (time.Duration(s.sinceSeconds) * time.Second).String()
+	}
+	extra := ""
+	if s.previous {
+		extra += " prev"
+	}
+	if s.timestamps {
+		extra += " ts"
+	}
+	if s.pretty {
+		extra += " json"
+	}
+	return fmt.Sprintf(" Logs [%s since=%s%s] (p prev · t ts · 1/2/3/4/0 since · ^S scroll · j json · C clear) ", scroll, since, extra)
+}
+
 func (a *App) showLogsView(targets []logs.PodLogTarget) {
-	ctx, cancel := context.WithCancel(context.Background())
 	buffer := logs.NewBuffer(10_000)
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
 	wrap := true
 	view.SetWrap(wrap).SetWordWrap(true)
-	view.SetTitle(" Logs ").SetBorder(true)
 	filter := ""
 	search := logSearchState{}
 	gotoPending := false
-	render := func() {
-		view.SetText(renderLogEntries(buffer.Filter(filter), true))
-	}
-	render()
+	st := &logViewState{autoscroll: true, tail: a.defaultTailLines(), sinceSeconds: a.defaultSinceSeconds()}
+	var cancel context.CancelFunc
 	streamer := a.logStreamer()
-	for _, target := range targets {
-		target := target
-		go func() {
-			writer := newLogLineWriter(target.Pod, buffer, func() {
-				a.app.QueueUpdateDraw(render)
-			})
-			if err := streamer(ctx, target, logs.RequestOptions{Follow: true}, writer); err != nil {
-				buffer.Append(target.Pod, "stream error: "+err.Error(), time.Now())
-				a.app.QueueUpdateDraw(render)
-			}
-		}()
+
+	render := func() {
+		view.SetText(renderLogView(buffer.Filter(filter), st.pretty))
+		if st.autoscroll {
+			view.ScrollToEnd()
+		}
 	}
+	launch := func(clearBuf bool) {
+		if cancel != nil {
+			cancel()
+		}
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if clearBuf {
+			buffer.Reset()
+		}
+		opts := st.options()
+		for _, target := range targets {
+			target := target
+			streamCtx := ctx
+			go func() {
+				writer := newLogLineWriter(target.Pod, buffer, func() {
+					a.app.QueueUpdateDraw(render)
+				})
+				if err := streamer(streamCtx, target, opts, writer); err != nil && streamCtx.Err() == nil {
+					buffer.Append(target.Pod, "stream error: "+err.Error(), time.Now())
+					a.app.QueueUpdateDraw(render)
+				}
+			}()
+		}
+		view.SetTitle(st.title())
+		render()
+	}
+	view.SetBorder(true)
+	launch(false)
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
 		case event.Rune() == 'q':
@@ -81,6 +146,47 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 			return nil
 		case event.Rune() == 's':
 			a.showLogSave(view, buffer, filter)
+			return nil
+		case event.Rune() == 'p':
+			st.previous = !st.previous
+			launch(true)
+			return nil
+		case event.Rune() == 't':
+			st.timestamps = !st.timestamps
+			launch(true)
+			return nil
+		case event.Rune() == 'j':
+			st.pretty = !st.pretty
+			view.SetTitle(st.title())
+			render()
+			return nil
+		case event.Key() == tcell.KeyCtrlS:
+			st.autoscroll = !st.autoscroll
+			view.SetTitle(st.title())
+			return nil
+		case event.Rune() == 'C':
+			buffer.Reset()
+			render()
+			return nil
+		case event.Rune() == '1':
+			st.sinceSeconds = 60
+			launch(true)
+			return nil
+		case event.Rune() == '2':
+			st.sinceSeconds = 300
+			launch(true)
+			return nil
+		case event.Rune() == '3':
+			st.sinceSeconds = 900
+			launch(true)
+			return nil
+		case event.Rune() == '4':
+			st.sinceSeconds = 3600
+			launch(true)
+			return nil
+		case event.Rune() == '0':
+			st.sinceSeconds = 0
+			launch(true)
 			return nil
 		case event.Rune() == 'g':
 			gotoPending = true
@@ -110,7 +216,11 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 		}
 		return event
 	})
-	a.pushView(view, view, "logs", cancel)
+	a.pushView(view, view, "logs", func() {
+		if cancel != nil {
+			cancel()
+		}
+	})
 }
 
 func (a *App) jumpLogEvents(view *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -365,6 +475,84 @@ func renderLogEntries(entries []logs.Entry, prefixPod bool) string {
 		lines = append(lines, formatLogEntryForView(entry, prefixPod))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// renderLogView renders entries either raw (with per-pod color) or, in pretty
+// mode, as aligned parsed fields with severity-colored levels.
+func renderLogView(entries []logs.Entry, pretty bool) string {
+	if !pretty {
+		return renderLogEntries(entries, true)
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, formatLogEntryPretty(entry))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatLogEntryPretty(entry logs.Entry) string {
+	parsed := entry.Parse
+	if parsed.Format == "text" || len(parsed.Fields) == 0 {
+		return formatLogEntryForView(entry, true)
+	}
+	level := firstNonEmpty(parsed.Fields["level"], parsed.Fields["severity"], parsed.Fields["lvl"])
+	msg := firstNonEmpty(parsed.Fields["msg"], parsed.Fields["message"])
+	prefix := ""
+	if entry.Pod != "" {
+		prefix = fmt.Sprintf("[%s]%s[-] ", logColor(entry.Color), entry.Pod)
+	}
+	levelTag := ""
+	if level != "" {
+		levelTag = fmt.Sprintf("[%s]%-5s[-] ", severityColor(level), strings.ToUpper(level))
+	}
+	extras := make([]string, 0, len(parsed.Fields))
+	keys := make([]string, 0, len(parsed.Fields))
+	for k := range parsed.Fields {
+		switch k {
+		case "level", "severity", "lvl", "msg", "message":
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		extras = append(extras, fmt.Sprintf("%s=%s", k, parsed.Fields[k]))
+	}
+	line := prefix + levelTag + msg
+	if len(extras) > 0 {
+		line += "  [gray]" + strings.Join(extras, " ") + "[-]"
+	}
+	return line
+}
+
+func severityColor(level string) string {
+	switch strings.ToLower(level) {
+	case "error", "err", "fatal", "panic", "crit":
+		return "red"
+	case "warn", "warning":
+		return "yellow"
+	case "debug", "trace":
+		return "gray"
+	default:
+		return "green"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (a *App) defaultTailLines() int64 {
+	return 200
+}
+
+func (a *App) defaultSinceSeconds() int64 {
+	return 0
 }
 
 func formatLogEntryForView(entry logs.Entry, prefixPod bool) string {

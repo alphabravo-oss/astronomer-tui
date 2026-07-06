@@ -52,6 +52,13 @@ func (b *Buffer) Append(pod, line string, ts time.Time) {
 	}
 }
 
+// Reset clears all buffered entries.
+func (b *Buffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.entries = nil
+}
+
 func (b *Buffer) Entries() []Entry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
