@@ -84,6 +84,28 @@ type App struct {
 	runCtx           context.Context //nolint:containedctx // retained so registry key actions can reach the run context.
 	tableKeymap      *Keymap
 	lastSelKey       string
+	labelSelector    labels.Selector
+	drillNodeName    string
+	tableStack       []tableState
+}
+
+// tableState captures the root-table view so drill-down can restore it on back.
+type tableState struct {
+	gvr      schema.GroupVersionResource
+	filter   string
+	sortCol  int
+	sortDesc bool
+	selector labels.Selector
+	nodeName string
+	selKey   string
+	crumb    string
+}
+
+// drillScope carries the extra scoping a drilled view applies on top of a GVR.
+type drillScope struct {
+	selector labels.Selector
+	nodeName string
+	crumb    string
 }
 
 func New(options Options) *App {
@@ -169,7 +191,7 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) buildTableKeymap() *Keymap {
 	k := &Keymap{}
 	wrap := func(fn func()) func() { return func() { a.safe(fn) } }
-	k.Add(keyBinding(tcell.KeyEnter, "describe", "Describe resource with events", "table", true, wrap(a.showDescribe)))
+	k.Add(keyBinding(tcell.KeyEnter, "enter", "Drill down (or describe)", "table", true, wrap(a.drillDown)))
 	k.Add(runeBinding('d', "describe", "Describe resource with events", "table", true, wrap(a.showDescribe)))
 	k.Add(runeBinding('y', "yaml", "View resource YAML", "table", true, wrap(a.showDetail)))
 	k.Add(runeBinding('e', "edit", "Edit YAML in $EDITOR", "table", true, wrap(a.showEdit)))
@@ -334,10 +356,20 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 		return
 	}
 	namespace := a.namespaceFor(client, gvr)
-	items, err := cache.List(gvr, namespace, labels.Everything())
+	a.mu.RLock()
+	selector := a.labelSelector
+	nodeName := a.drillNodeName
+	a.mu.RUnlock()
+	if selector == nil {
+		selector = labels.Everything()
+	}
+	items, err := cache.List(gvr, namespace, selector)
 	if err != nil {
 		a.Flash(FlashError, "%s: list failed: %s", gvr.Resource, err.Error())
 		return
+	}
+	if nodeName != "" {
+		items = filterByNodeName(items, nodeName)
 	}
 	a.mu.RLock()
 	filter, sortCol, sortDesc := a.filter, a.sortCol, a.sortDesc
@@ -426,6 +458,13 @@ func displayNamespace(namespace string) string {
 }
 
 func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResource) bool {
+	return a.switchResourceScoped(ctx, gvr, drillScope{})
+}
+
+// switchResourceScoped switches the root table to a GVR, applying an optional
+// drill scope (label selector or node-name field filter) atomically so the
+// first refresh already honors it.
+func (a *App) switchResourceScoped(ctx context.Context, gvr schema.GroupVersionResource, scope drillScope) bool {
 	renderer := a.rendererFor(ctx, gvr)
 	if renderer == nil {
 		a.showMessage("Unknown resource", gvr.String())
@@ -444,9 +483,16 @@ func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResourc
 	a.filter = ""
 	a.sortCol = 0
 	a.sortDesc = false
+	a.labelSelector = scope.selector
+	a.drillNodeName = scope.nodeName
 	cache := a.cache
 	client := a.options.Client
 	a.mu.Unlock()
+	if scope.crumb != "" {
+		a.nav.SetTopCrumb(scope.crumb)
+	} else {
+		a.nav.SetTopCrumb(gvr.Resource)
+	}
 	cache.Ensure(gvr)
 	a.drawHeader(renderer)
 	events := cache.Subscribe(gvr)

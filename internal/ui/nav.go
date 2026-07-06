@@ -222,6 +222,9 @@ func (a *App) handleEsc() {
 		a.back()
 		return
 	}
+	if a.popTableState() {
+		return
+	}
 	a.mu.RLock()
 	filter := a.filter
 	a.mu.RUnlock()

@@ -954,6 +954,53 @@ func TestSwitchResourceAppliesCacheUpdates(t *testing.T) {
 	waitForVisibleNames(t, app, []string{"api", "worker"})
 }
 
+func TestDrillToResourceAndBackRestoresState(t *testing.T) {
+	deployGVR := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	podGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			podGVR:    "PodList",
+			deployGVR: "DeploymentList",
+		},
+		podObject("api-1", "default"))
+	app := New(Options{Client: &cluster.Client{Context: "kind-kind", Namespace: "default", Dynamic: client}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	app.runCtx = ctx
+	app.cache = cluster.NewResourceCache(client, time.Hour)
+	app.cache.Start(ctx)
+	app.nav.SetRootView(app.table, "")
+
+	if !app.switchResource(ctx, deployGVR) {
+		t.Fatal("expected switch to deployments")
+	}
+	app.drillToResource(drillTarget{kind: drillResource, gvr: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, selector: "app=api", namespace: "default", crumb: "deployments/api › pods"})
+
+	app.mu.RLock()
+	gvr := app.currentGVR
+	sel := app.labelSelector
+	stackDepth := len(app.tableStack)
+	app.mu.RUnlock()
+	if gvr.Resource != "pods" || sel == nil {
+		t.Fatalf("expected drilled pods with selector, got %s sel=%v", gvr.Resource, sel)
+	}
+	if stackDepth != 1 {
+		t.Fatalf("expected drill stack depth 1, got %d", stackDepth)
+	}
+
+	if !app.popTableState() {
+		t.Fatal("expected popTableState to restore")
+	}
+	app.mu.RLock()
+	gvr = app.currentGVR
+	sel = app.labelSelector
+	stackDepth = len(app.tableStack)
+	app.mu.RUnlock()
+	if gvr.Resource != "deployments" || sel != nil || stackDepth != 0 {
+		t.Fatalf("expected restore to deployments (no selector, empty stack), got %s sel=%v depth=%d", gvr.Resource, sel, stackDepth)
+	}
+}
+
 func TestSortColumnFromRune(t *testing.T) {
 	if col, ok := sortColumnFromRune('@'); !ok || col != 1 {
 		t.Fatalf("expected @ to map to column 1, got %d %v", col, ok)
