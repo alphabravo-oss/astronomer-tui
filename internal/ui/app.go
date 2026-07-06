@@ -825,6 +825,15 @@ func (a *App) showCommand(ctx context.Context) {
 			case "aliases-view":
 				a.showAliasesView()
 				return
+			case "pulses":
+				a.showPulsesView(ctx)
+				return
+			case "rbac":
+				a.showRBACView(ctx, command.Value)
+				return
+			case "can":
+				a.runCanI(ctx, command.Value)
+				return
 			}
 		}
 		a.closeModal()

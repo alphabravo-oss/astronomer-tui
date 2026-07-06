@@ -83,6 +83,21 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "aliases-view"}, true
+	case "pulses", "pulse":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "pulses"}, true
+	case "rbac":
+		if len(parts) != 2 {
+			return Command{}, false
+		}
+		return Command{Kind: "rbac", Value: parts[1]}, true
+	case "can":
+		if len(parts) < 3 {
+			return Command{}, false
+		}
+		return Command{Kind: "can", Value: parts[1] + " " + parts[2]}, true
 	default:
 		return Command{Kind: "resource", Value: parts[0]}, true
 	}
