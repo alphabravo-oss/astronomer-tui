@@ -57,6 +57,39 @@ func TestDiscoverResourcesFiltersSubresources(t *testing.T) {
 	}
 }
 
+func TestResolveResourceMatchesPluralSingularShortNamesAndKind(t *testing.T) {
+	disco := &discoveryfake.FakeDiscovery{Fake: &ktesting.Fake{}}
+	disco.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "v1",
+			APIResources: []metav1.APIResource{
+				{Name: "pods", SingularName: "pod", Kind: "Pod", ShortNames: []string{"po"}, Namespaced: true, Verbs: []string{"list"}},
+			},
+		},
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "widgets", SingularName: "widget", Kind: "Widget", ShortNames: []string{"wd"}, Verbs: []string{"list"}},
+				{Name: "widgets/status", Verbs: []string{"get"}},
+			},
+		},
+	}
+	client := memory.NewMemCacheClient(disco)
+	for _, name := range []string{"widgets", "widget", "wd", "Widget", "widgets.example.com"} {
+		resolved, ok := ResolveResource(client, name)
+		if !ok || resolved.GVR.Group != "example.com" || resolved.GVR.Resource != "widgets" || resolved.Namespaced {
+			t.Fatalf("resolve %q: got %#v %v", name, resolved, ok)
+		}
+	}
+	resolved, ok := ResolveResource(client, "po")
+	if !ok || resolved.GVR.Resource != "pods" || !resolved.Namespaced {
+		t.Fatalf("resolve po: got %#v %v", resolved, ok)
+	}
+	if _, ok := ResolveResource(client, "nope"); ok {
+		t.Fatal("expected unknown resource to fail resolution")
+	}
+}
+
 func TestClientConfigHelpers(t *testing.T) {
 	t.Setenv("KUBECONFIG", "/tmp/kubeconfig")
 	if got := kubeconfigPath(clientcmd.NewDefaultClientConfigLoadingRules()); got != "/tmp/kubeconfig" {

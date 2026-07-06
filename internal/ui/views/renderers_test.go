@@ -96,9 +96,9 @@ func TestRendererForCRDWithoutPrinterColumnsFallsBackToNameAge(t *testing.T) {
 
 func TestBuiltinRendererHeadersForBreadthResources(t *testing.T) {
 	for gvr, want := range map[schema.GroupVersionResource][]string{
-		{Group: "apps", Version: "v1", Resource: "daemonsets"}:                        {"NAMESPACE", "NAME", "VS", "DESIRED", "CURRENT", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "VALID", "AGE"},
+		{Group: "apps", Version: "v1", Resource: "daemonsets"}:                        {"NAMESPACE", "NAME", "DESIRED", "CURRENT", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "AGE"},
 		{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}:   {"NAME", "NAMESPACE", "REFERENCE", "TARGETS", "MINPODS", "MAXPODS", "REPLICAS", "AGE"},
-		{Version: "v1", Resource: "persistentvolumes"}:                                {"NAME", "CAPACITY", "ACCESS MODES", "RECLAIM POLICY", "STATUS", "CLAIM", "STORAGECLASS", "REASON", "VOLUMEMODE", "LABELS", "VALID", "AGE"},
+		{Version: "v1", Resource: "persistentvolumes"}:                                {"NAME", "CAPACITY", "ACCESS MODES", "RECLAIM POLICY", "STATUS", "CLAIM", "STORAGECLASS", "REASON", "VOLUMEMODE", "LABELS", "AGE"},
 		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}: {"NAME", "LABELS", "AGE"},
 		{Group: "apiregistration.k8s.io", Version: "v1", Resource: "apiservices"}:     {"NAME", "SERVICE", "AVAILABLE", "AGE"},
 	} {
@@ -213,6 +213,46 @@ func TestBuiltinRendererExtractsCoreNetworkingAndClusterFields(t *testing.T) {
 	}
 }
 
+func TestPodStatusDerivation(t *testing.T) {
+	base := func(mutate func(obj map[string]any)) map[string]any {
+		obj := map[string]any{
+			"metadata": map[string]any{"name": "api"},
+			"spec":     map[string]any{"containers": []any{map[string]any{"name": "app"}}},
+			"status":   map[string]any{"phase": "Running"},
+		}
+		mutate(obj)
+		return obj
+	}
+	cases := []struct {
+		name   string
+		obj    map[string]any
+		expect string
+	}{
+		{"running", base(func(map[string]any) {}), "Running"},
+		{"terminating", base(func(obj map[string]any) {
+			obj["metadata"].(map[string]any)["deletionTimestamp"] = "2026-05-09T00:00:00Z"
+		}), "Terminating"},
+		{"completed", base(func(obj map[string]any) {
+			obj["status"].(map[string]any)["phase"] = "Succeeded"
+		}), "Completed"},
+		{"crashloop", base(func(obj map[string]any) {
+			obj["status"].(map[string]any)["containerStatuses"] = []any{
+				map[string]any{"state": map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}}},
+			}
+		}), "CrashLoopBackOff"},
+		{"init failure", base(func(obj map[string]any) {
+			obj["status"].(map[string]any)["initContainerStatuses"] = []any{
+				map[string]any{"state": map[string]any{"waiting": map[string]any{"reason": "ImagePullBackOff"}}},
+			}
+		}), "Init:ImagePullBackOff"},
+	}
+	for _, tc := range cases {
+		if got := podStatus(tc.obj); got != tc.expect {
+			t.Fatalf("%s: got %q want %q", tc.name, got, tc.expect)
+		}
+	}
+}
+
 func TestBuiltinRendererExtractsBreadthFields(t *testing.T) {
 	ingressRenderer := Builtins()[schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}]
 	ingress := &unstructured.Unstructured{Object: map[string]any{
@@ -257,6 +297,11 @@ func TestBuiltinRendererSnapshot(t *testing.T) {
 		fmt.Fprintf(&out, "%s\n", gvr.String())
 		fmt.Fprintf(&out, "  headers: %s\n", strings.Join(headerNames(renderer.Header()), " | "))
 		fmt.Fprintf(&out, "  row: %s\n", strings.Join(cellTexts(renderer.Row(rendererSnapshotObject(gvr))), " | "))
+	}
+	if os.Getenv("ASTROTUI_UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile("testdata/builtin_renderers.golden", []byte(out.String()), 0o600); err != nil {
+			t.Fatalf("update golden: %v", err)
+		}
 	}
 	want, err := os.ReadFile("testdata/builtin_renderers.golden") // #nosec G304 -- test reads local golden snapshot.
 	if err != nil {
@@ -403,6 +448,40 @@ func rendererSnapshotObject(gvr schema.GroupVersionResource) *unstructured.Unstr
 	case "nodes":
 		delete(obj.Object, "roleRef")
 		delete(obj.Object, "subjects")
+		status := obj.Object["status"].(map[string]any)
+		status["nodeInfo"] = map[string]any{
+			"kubeletVersion": "v1.30.0",
+			"architecture":   "amd64",
+			"osImage":        "Ubuntu 24.04",
+			"kernelVersion":  "6.8.0",
+		}
+		status["addresses"] = []any{
+			map[string]any{"type": "InternalIP", "address": "10.0.0.10"},
+			map[string]any{"type": "ExternalIP", "address": "203.0.113.10"},
+		}
+		spec := obj.Object["spec"].(map[string]any)
+		spec["taints"] = []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}}
+	case "pods":
+		status := obj.Object["status"].(map[string]any)
+		delete(status, "nodeInfo")
+		status["podIP"] = "10.1.2.3"
+		status["qosClass"] = "Burstable"
+		status["containerStatuses"] = []any{
+			map[string]any{
+				"ready":        true,
+				"restartCount": int64(1),
+				"state":        map[string]any{"running": map[string]any{}},
+			},
+			map[string]any{
+				"ready":        false,
+				"restartCount": int64(2),
+				"state":        map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}},
+				"lastState":    map[string]any{"terminated": map[string]any{"finishedAt": "2026-05-09T00:00:00Z", "reason": "Error"}},
+			},
+		}
+		spec := obj.Object["spec"].(map[string]any)
+		spec["containers"] = []any{map[string]any{"name": "app", "image": "example/app:1"}}
+		spec["serviceAccountName"] = "runner"
 	case "events":
 		delete(obj.Object, "spec")
 		obj.Object["type"] = "Warning"

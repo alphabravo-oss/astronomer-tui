@@ -15,6 +15,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,22 +54,24 @@ type Options struct {
 }
 
 type App struct {
-	options        Options
-	app            *tview.Application
-	table          *tview.Table
-	cache          *cluster.ResourceCache
-	currentGVR     schema.GroupVersionResource
-	objects        []*unstructured.Unstructured
-	visibleObjects []*unstructured.Unstructured
-	filter         string
-	sortCol        int
-	sortDesc       bool
-	mu             sync.RWMutex
-	resourceCancel context.CancelFunc
-	crashes        CrashReporter
-	renderer       views.Renderer
-	pluginFile     plugins.File
-	skin           uitheme.Skin
+	options          Options
+	app              *tview.Application
+	table            *tview.Table
+	cache            *cluster.ResourceCache
+	currentGVR       schema.GroupVersionResource
+	objects          []*unstructured.Unstructured
+	visibleObjects   []*unstructured.Unstructured
+	filter           string
+	sortCol          int
+	sortDesc         bool
+	mu               sync.RWMutex
+	resourceCancel   context.CancelFunc
+	crashes          CrashReporter
+	renderer         views.Renderer
+	pluginFile       plugins.File
+	skin             uitheme.Skin
+	clusterScopedDyn map[schema.GroupVersionResource]bool
+	crdRenderers     map[schema.GroupVersionResource]views.Renderer
 }
 
 func New(options Options) *App {
@@ -111,7 +115,7 @@ func (a *App) Run(ctx context.Context) error {
 			return nil
 		}
 		if event.Key() == tcell.KeyEnter {
-			a.safe(a.showDetail)
+			a.safe(a.showDescribe)
 			return nil
 		}
 		if event.Rune() == '/' {
@@ -122,8 +126,16 @@ func (a *App) Run(ctx context.Context) error {
 			a.safe(func() { a.showCommand(ctx) })
 			return nil
 		}
-		if event.Rune() == 'd' {
+		if event.Key() == tcell.KeyCtrlD {
 			a.safe(a.showDelete)
+			return nil
+		}
+		if event.Rune() == 'd' {
+			a.safe(a.showDescribe)
+			return nil
+		}
+		if event.Rune() == 'y' {
+			a.safe(a.showDetail)
 			return nil
 		}
 		if event.Rune() == 'e' {
@@ -148,6 +160,10 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		if event.Rune() == 'r' {
 			a.safe(a.showRestart)
+			return nil
+		}
+		if event.Rune() == '0' {
+			a.safe(func() { a.switchNamespace("all") })
 			return nil
 		}
 		if col, ok := sortColumnFromRune(event.Rune()); ok {
@@ -272,7 +288,7 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 	if current != gvr {
 		return
 	}
-	namespace := namespaceFor(client, gvr)
+	namespace := a.namespaceFor(client, gvr)
 	items, err := cache.List(gvr, namespace, labels.Everything())
 	if err != nil {
 		return
@@ -304,7 +320,7 @@ func (a *App) updateTitle() {
 	if resource == "" {
 		resource = "resources"
 	}
-	title := fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, resource)
+	title := fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, displayNamespace(a.options.Client.Namespace), resource)
 	a.mu.RLock()
 	filter := a.filter
 	a.mu.RUnlock()
@@ -314,8 +330,15 @@ func (a *App) updateTitle() {
 	a.table.SetTitle(title)
 }
 
+func displayNamespace(namespace string) string {
+	if namespace == "" {
+		return "all"
+	}
+	return namespace
+}
+
 func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResource) bool {
-	renderer := rendererForGVR(gvr)
+	renderer := a.rendererFor(ctx, gvr)
 	if renderer == nil {
 		a.showMessage("Unknown resource", gvr.String())
 		return false
@@ -364,6 +387,60 @@ func rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
 	return views.GenericRenderer{Resource: gvr}
 }
 
+// rendererFor prefers builtin renderers, then CRD printer columns discovered
+// from the cluster, then the generic NAME/NAMESPACE/AGE fallback.
+func (a *App) rendererFor(ctx context.Context, gvr schema.GroupVersionResource) views.Renderer {
+	if gvr.Resource == "" || gvr.Version == "" {
+		return nil
+	}
+	if renderer, ok := views.Builtins()[gvr]; ok {
+		return renderer
+	}
+	a.mu.RLock()
+	cached, ok := a.crdRenderers[gvr]
+	a.mu.RUnlock()
+	if ok {
+		return cached
+	}
+	renderer := a.lookupCRDRenderer(ctx, gvr)
+	if renderer == nil {
+		renderer = views.GenericRenderer{Resource: gvr}
+	}
+	a.mu.Lock()
+	if a.crdRenderers == nil {
+		a.crdRenderers = map[schema.GroupVersionResource]views.Renderer{}
+	}
+	a.crdRenderers[gvr] = renderer
+	a.mu.Unlock()
+	return renderer
+}
+
+func (a *App) lookupCRDRenderer(ctx context.Context, gvr schema.GroupVersionResource) views.Renderer {
+	if gvr.Group == "" || a.options.Client == nil || a.options.Client.Dynamic == nil {
+		return nil
+	}
+	crdGVR := schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	obj, err := a.options.Client.Dynamic.Resource(crdGVR).Get(lookupCtx, gvr.Resource+"."+gvr.Group, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &crd); err != nil {
+		return nil
+	}
+	if crd.Spec.Scope == apiextensionsv1.ClusterScoped {
+		a.mu.Lock()
+		if a.clusterScopedDyn == nil {
+			a.clusterScopedDyn = map[schema.GroupVersionResource]bool{}
+		}
+		a.clusterScopedDyn[gvr] = true
+		a.mu.Unlock()
+	}
+	return views.RendererForCRD(&crd, gvr.Version)
+}
+
 func (a *App) showHelp() {
 	modal := tview.NewModal().
 		SetText(HelpText(a.actionCatalog())).
@@ -409,12 +486,25 @@ func (a *App) showCommand(ctx context.Context) {
 			case "resource":
 				gvr, ok := resourceCommand(command.Value)
 				if !ok {
+					gvr, ok = a.resolveDiscoveryResource(command.Value)
+				}
+				if !ok {
 					a.showMessage("Unknown command", ":"+input.GetText())
 					return
 				}
 				a.switchResource(ctx, gvr)
 			case "namespace":
 				a.switchNamespace(command.Value)
+			case "context":
+				if !a.switchContext(ctx, command.Value) {
+					return
+				}
+			case "palette":
+				a.showPalette()
+				return
+			case "quit":
+				a.app.Stop()
+				return
 			case "port-forward-manager":
 				a.showPortForwardManager()
 				return
@@ -430,11 +520,36 @@ func (a *App) switchNamespace(namespace string) {
 	if namespace == "" {
 		return
 	}
+	if namespace == "all" || namespace == "*" {
+		namespace = ""
+	}
 	if a.options.Client == nil {
 		a.options.Client = &cluster.Client{}
 	}
 	a.options.Client.Namespace = namespace
 	a.renderCurrent()
+}
+
+// resolveDiscoveryResource maps a typed resource name (plural, singular, short
+// name, or kind) to a GVR via API discovery, covering CRDs and any API group
+// that is not in the static alias table.
+func (a *App) resolveDiscoveryResource(name string) (schema.GroupVersionResource, bool) {
+	if a.options.Client == nil || a.options.Client.Discovery == nil {
+		return schema.GroupVersionResource{}, false
+	}
+	resolved, ok := cluster.ResolveResource(a.options.Client.Discovery, name)
+	if !ok {
+		return schema.GroupVersionResource{}, false
+	}
+	if !resolved.Namespaced {
+		a.mu.Lock()
+		if a.clusterScopedDyn == nil {
+			a.clusterScopedDyn = map[schema.GroupVersionResource]bool{}
+		}
+		a.clusterScopedDyn[resolved.GVR] = true
+		a.mu.Unlock()
+	}
+	return resolved.GVR, true
 }
 
 func (a *App) switchContext(ctx context.Context, contextName string) bool {
@@ -460,6 +575,8 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	}
 	a.options.Client = client
 	a.cache = newCache
+	a.crdRenderers = nil
+	a.clusterScopedDyn = nil
 	gvr := a.currentGVR
 	a.mu.Unlock()
 	if gvr.Resource == "" {
@@ -746,11 +863,68 @@ func (a *App) showDetail() {
 	a.showDetailFor(a.selectedObject())
 }
 
-func (a *App) showDetailFor(obj *unstructured.Unstructured) {
+// showDescribe renders the resource manifest followed by the events that
+// reference it, approximating `kubectl describe` / k9s `d`.
+func (a *App) showDescribe() {
+	obj := a.selectedObject()
 	if obj == nil || a.renderer == nil {
 		return
 	}
 	detail := a.renderer.Detail(obj)
+	detail.Body += "\n" + describeEventsSection(a.objectEvents(obj))
+	a.showDetailContent(detail)
+}
+
+func (a *App) objectEvents(obj *unstructured.Unstructured) []corev1.Event {
+	if a.options.Client == nil || a.options.Client.Clientset == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	selector := fmt.Sprintf("involvedObject.name=%s", obj.GetName())
+	list, err := a.options.Client.Clientset.CoreV1().Events(obj.GetNamespace()).List(ctx, metav1.ListOptions{FieldSelector: selector})
+	if err != nil {
+		return nil
+	}
+	return list.Items
+}
+
+func describeEventsSection(events []corev1.Event) string {
+	lines := []string{"EVENTS"}
+	if len(events) == 0 {
+		return strings.Join(append(lines, "  <none>"), "\n")
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		return eventTime(events[i]).Before(eventTime(events[j]))
+	})
+	for _, event := range events {
+		when := ""
+		if t := eventTime(event); !t.IsZero() {
+			when = time.Since(t).Round(time.Second).String() + " ago"
+		}
+		lines = append(lines, fmt.Sprintf("  %-8s %-20s %-12s %s", event.Type, event.Reason, when, event.Message))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func eventTime(event corev1.Event) time.Time {
+	if !event.LastTimestamp.IsZero() {
+		return event.LastTimestamp.Time
+	}
+	if !event.EventTime.IsZero() {
+		return event.EventTime.Time
+	}
+	return event.CreationTimestamp.Time
+}
+
+func (a *App) showDetailFor(obj *unstructured.Unstructured) {
+	if obj == nil || a.renderer == nil {
+		return
+	}
+	a.showDetailContent(a.renderer.Detail(obj))
+}
+
+func (a *App) showDetailContent(detail views.DetailContent) {
 	view := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -791,6 +965,16 @@ func (a *App) namespaceNames() []string {
 	return out
 }
 
+func (a *App) namespaceFor(client *cluster.Client, gvr schema.GroupVersionResource) string {
+	a.mu.RLock()
+	dynScoped := a.clusterScopedDyn[gvr]
+	a.mu.RUnlock()
+	if dynScoped {
+		return ""
+	}
+	return namespaceFor(client, gvr)
+}
+
 func namespaceFor(client *cluster.Client, gvr schema.GroupVersionResource) string {
 	if clusterScoped(gvr.Resource) {
 		return ""
@@ -807,7 +991,10 @@ func HelpText(catalog []actions.Action) string {
 		lines = append(lines, fmt.Sprintf("%s  %s - %s", action.Key, action.Name, action.Description))
 	}
 	lines = append(lines, "Ctrl+P  palette - Search resources, actions, contexts, namespaces, plugins")
-	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
+	lines = append(lines, ":  command - Switch resource view (any discovered resource, e.g. :pods, :crds, :myresources)")
+	lines = append(lines, ":ns <name>|all  namespace - Switch namespace (0 = all namespaces)")
+	lines = append(lines, ":ctx <name>  context - Switch kube context")
+	lines = append(lines, ":q  quit - Exit astrotui")
 	lines = append(lines, "/  filter - Filter visible rows")
 	lines = append(lines, "Shift+1..9  sort - Sort by column")
 	lines = append(lines, "?  help - Show this overlay")
@@ -858,14 +1045,23 @@ func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, fi
 		}
 		pairs = append(pairs, rowObject{row: row, obj: obj})
 	}
+	// Pre-sort by namespace/name so ties on the active sort column stay
+	// deterministic regardless of cache iteration order.
+	sort.SliceStable(pairs, func(i, j int) bool {
+		if ns := strings.Compare(pairs[i].obj.GetNamespace(), pairs[j].obj.GetNamespace()); ns != 0 {
+			return ns < 0
+		}
+		return pairs[i].obj.GetName() < pairs[j].obj.GetName()
+	})
 	sort.SliceStable(pairs, func(i, j int) bool {
 		if sortCol >= len(pairs[i].row) || sortCol >= len(pairs[j].row) {
 			return false
 		}
+		c := views.CompareCellValues(pairs[i].row[sortCol].Text, pairs[j].row[sortCol].Text)
 		if sortDesc {
-			return pairs[i].row[sortCol].Text > pairs[j].row[sortCol].Text
+			return c > 0
 		}
-		return pairs[i].row[sortCol].Text < pairs[j].row[sortCol].Text
+		return c < 0
 	})
 	rows := make([][]views.Cell, len(pairs))
 	visible := make([]*unstructured.Unstructured, len(pairs))

@@ -1,6 +1,6 @@
 /v1, Resource=configmaps
-  headers: NAMESPACE | NAME | DATA | VALID | AGE
-  row: default | sample | 1 |  | 
+  headers: NAMESPACE | NAME | DATA | AGE
+  row: default | sample | 1 | 
 /v1, Resource=endpoints
   headers: NAMESPACE | NAME | ENDPOINTS | AGE
   row: default | sample | 1 | 
@@ -8,53 +8,53 @@
   headers: LAST SEEN | TYPE | REASON | OBJECT | MESSAGE
   row: 2026-05-09T00:00:00Z | Warning | Failed | Pod/sample | pull failed
 /v1, Resource=namespaces
-  headers: NAME | STATUS | LABELS | VALID | AGE
-  row: sample | Ready | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAME | STATUS | LABELS | AGE
+  row: sample | Ready | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=nodes
-  headers: NAME | STATUS | ROLE | ARCH | TAINTS | VERSION | OS-IMAGE | KERNEL | INTERNAL-IP | EXTERNAL-IP | PODS | CPU | CPU/A | %CPU | MEM | MEM/A | %MEM | GPU/A | GPU/C | SH-GPU/A | SH-GPU/C | LABELS | VALID | AGE
-  row: sample | Ready | worker |  |  | v1.30.0 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAME | STATUS | ROLE | ARCH | TAINTS | VERSION | OS-IMAGE | KERNEL | INTERNAL-IP | EXTERNAL-IP | LABELS | AGE
+  row: sample | Ready | worker | amd64 | 1 | v1.30.0 | Ubuntu 24.04 | 6.8.0 | 10.0.0.10 | 203.0.113.10 | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=persistentvolumeclaims
-  headers: NAMESPACE | NAME | STATUS | VOLUME | CAPACITY | ACCESS MODES | STORAGECLASS | LABELS | VALID | AGE
-  row: default | sample | Ready | pv-a | 10Gi | ReadWriteOnce |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | STATUS | VOLUME | CAPACITY | ACCESS MODES | STORAGECLASS | LABELS | AGE
+  row: default | sample | Ready | pv-a | 10Gi | ReadWriteOnce |  | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=persistentvolumes
-  headers: NAME | CAPACITY | ACCESS MODES | RECLAIM POLICY | STATUS | CLAIM | STORAGECLASS | REASON | VOLUMEMODE | LABELS | VALID | AGE
-  row: sample | 10Gi | ReadWriteOnce | Delete | Ready | default/data |  | Failed |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAME | CAPACITY | ACCESS MODES | RECLAIM POLICY | STATUS | CLAIM | STORAGECLASS | REASON | VOLUMEMODE | LABELS | AGE
+  row: sample | 10Gi | ReadWriteOnce | Delete | Ready | default/data |  | Failed |  | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=pods
-  headers: NAMESPACE | NAME | VS | PF | READY | STATUS | RESTARTS | LAST RESTART | CPU | CPU/RL | %CPU/R | %CPU/L | MEM | MEM/RL | %MEM/R | %MEM/L | GPU/RL | IP | NODE | SERVICE-ACCOUNT | NOMINATED NODE | READINESS GATES | QOS | LABELS | VALID | AGE
-  row: default | sample |  |  | 1/2 | Ready | 3 |  |  |  |  |  |  |  |  |  |  |  | node-a |  |  |  |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | READY | STATUS | RESTARTS | LAST RESTART | IP | NODE | SERVICE-ACCOUNT | NOMINATED NODE | READINESS GATES | QOS | LABELS | AGE
+  row: default | sample | 1/2 | CrashLoopBackOff | 3 | 58d | 10.1.2.3 | node-a | runner |  |  | Burstable | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=secrets
-  headers: NAMESPACE | NAME | TYPE | DATA | VALID | AGE
-  row: default | sample | Opaque | 1 |  | 
+  headers: NAMESPACE | NAME | TYPE | DATA | AGE
+  row: default | sample | Opaque | 1 | 
 /v1, Resource=serviceaccounts
-  headers: NAMESPACE | NAME | SECRET | LABELS | VALID | AGE
-  row: default | sample | 1 | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | SECRET | LABELS | AGE
+  row: default | sample | 1 | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=services
-  headers: NAMESPACE | NAME | TYPE | CLUSTER-IP | EXTERNAL-IP | SELECTOR | PORTS | LABELS | VALID | AGE
-  row: default | sample | ClusterIP | 10.0.0.1 |  |  | 80/TCP | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | TYPE | CLUSTER-IP | EXTERNAL-IP | SELECTOR | PORTS | LABELS | AGE
+  row: default | sample | ClusterIP | 10.0.0.1 |  |  | 80/TCP | app=api,node-role.kubernetes.io/worker= | 
 apiregistration.k8s.io/v1, Resource=apiservices
   headers: NAME | SERVICE | AVAILABLE | AGE
   row: sample | default/api | True | 
 apps/v1, Resource=daemonsets
-  headers: NAMESPACE | NAME | VS | DESIRED | CURRENT | READY | UP-TO-DATE | AVAILABLE | LABELS | VALID | AGE
-  row: default | sample |  | 3 | 3 | 1/2 | 3 | 2 | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | DESIRED | CURRENT | READY | UP-TO-DATE | AVAILABLE | LABELS | AGE
+  row: default | sample | 3 | 3 | 1/2 | 3 | 2 | app=api,node-role.kubernetes.io/worker= | 
 apps/v1, Resource=deployments
-  headers: NAMESPACE | NAME | VS | READY | UP-TO-DATE | AVAILABLE | LABELS | VALID | AGE
-  row: default | sample |  | 1/2 | 3 | 2 | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | READY | UP-TO-DATE | AVAILABLE | LABELS | AGE
+  row: default | sample | 1/2 | 3 | 2 | app=api,node-role.kubernetes.io/worker= | 
 apps/v1, Resource=replicasets
-  headers: NAMESPACE | NAME | VS | DESIRED | CURRENT | READY | CONTAINERS | IMAGES | SELECTOR | VALID | AGE
-  row: default | sample |  | 3 | 3 | 1/2 |  |  |  |  | 
+  headers: NAMESPACE | NAME | DESIRED | CURRENT | READY | CONTAINERS | IMAGES | SELECTOR | AGE
+  row: default | sample | 3 | 3 | 1/2 |  |  |  | 
 apps/v1, Resource=statefulsets
-  headers: NAMESPACE | NAME | VS | READY | SELECTOR | SERVICE | CONTAINERS | IMAGES | LABELS | VALID | AGE
-  row: default | sample |  | 1/2 |  | default/api |  |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | READY | SELECTOR | SERVICE | CONTAINERS | IMAGES | LABELS | AGE
+  row: default | sample | 1/2 |  | default/api |  |  | app=api,node-role.kubernetes.io/worker= | 
 autoscaling/v2, Resource=horizontalpodautoscalers
   headers: NAME | NAMESPACE | REFERENCE | TARGETS | MINPODS | MAXPODS | REPLICAS | AGE
   row: sample | default | Deployment/api | 2/3 | 1 | 5 | 3 | 
 batch/v1, Resource=cronjobs
-  headers: NAMESPACE | NAME | VS | SCHEDULE | SUSPEND | ACTIVE | LAST_SCHEDULE | SELECTOR | CONTAINERS | IMAGES | LABELS | VALID | AGE
-  row: default | sample |  | */5 * * * * | false | 1 | 2026-05-09T00:00:00Z |  |  |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | SCHEDULE | SUSPEND | ACTIVE | LAST_SCHEDULE | SELECTOR | CONTAINERS | IMAGES | LABELS | AGE
+  row: default | sample | */5 * * * * | false | 1 | 2026-05-09T00:00:00Z |  |  |  | app=api,node-role.kubernetes.io/worker= | 
 batch/v1, Resource=jobs
-  headers: NAMESPACE | NAME | VS | COMPLETIONS | DURATION | SELECTOR | CONTAINERS | IMAGES | VALID | AGE
-  row: default | sample |  | 1/1 | 1m0s |  |  |  |  | 
+  headers: NAMESPACE | NAME | COMPLETIONS | DURATION | SELECTOR | CONTAINERS | IMAGES | AGE
+  row: default | sample | 1/1 | 1m0s |  |  |  | 
 coordination.k8s.io/v1, Resource=leases
   headers: NAME | NAMESPACE | HOLDER | AGE
   row: sample | default | holder-a | 
@@ -65,11 +65,11 @@ networking.k8s.io/v1, Resource=ingresses
   headers: NAME | NAMESPACE | CLASS | HOSTS | ADDRESS | PORTS | AGE
   row: sample | default | nginx | app.example.com | 1.2.3.4 | 80/TCP | 
 networking.k8s.io/v1, Resource=networkpolicies
-  headers: NAMESPACE | NAME | POD-SELECTOR | ING-SELECTOR | ING-PORTS | ING-BLOCK | EGR-SELECTOR | EGR-PORTS | EGR-BLOCK | LABELS | VALID | AGE
-  row: default | sample | app=api |  |  |  |  |  |  | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | POD-SELECTOR | ING-SELECTOR | ING-PORTS | ING-BLOCK | EGR-SELECTOR | EGR-PORTS | EGR-BLOCK | LABELS | AGE
+  row: default | sample | app=api |  |  |  |  |  |  | app=api,node-role.kubernetes.io/worker= | 
 policy/v1, Resource=poddisruptionbudgets
-  headers: NAMESPACE | NAME | MIN-AVAILABLE | MAX-UNAVAILABLE | ALLOWED-DISRUPTIONS | CURRENT | DESIRED | EXPECTED | LABELS | VALID | AGE
-  row: default | sample | 1 | 1 | 1 | 3 | 3 | 3 | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | MIN-AVAILABLE | MAX-UNAVAILABLE | ALLOWED-DISRUPTIONS | CURRENT | DESIRED | EXPECTED | LABELS | AGE
+  row: default | sample | 1 | 1 | 1 | 3 | 3 | 3 | app=api,node-role.kubernetes.io/worker= | 
 rbac.authorization.k8s.io/v1, Resource=clusterrolebindings
   headers: NAME | CLUSTERROLE | SUBJECT-KIND | SUBJECTS | LABELS | AGE
   row: sample | admin | ServiceAccount | default | app=api,node-role.kubernetes.io/worker= | 
@@ -77,14 +77,14 @@ rbac.authorization.k8s.io/v1, Resource=clusterroles
   headers: NAME | LABELS | AGE
   row: sample | app=api,node-role.kubernetes.io/worker= | 
 rbac.authorization.k8s.io/v1, Resource=rolebindings
-  headers: NAMESPACE | NAME | ROLE | KIND | SUBJECTS | LABELS | VALID | AGE
-  row: default | sample | ClusterRole/admin | ClusterRole | default | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | ROLE | KIND | SUBJECTS | LABELS | AGE
+  row: default | sample | ClusterRole/admin | ClusterRole | default | app=api,node-role.kubernetes.io/worker= | 
 rbac.authorization.k8s.io/v1, Resource=roles
-  headers: NAMESPACE | NAME | LABELS | VALID | AGE
-  row: default | sample | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAMESPACE | NAME | LABELS | AGE
+  row: default | sample | app=api,node-role.kubernetes.io/worker= | 
 storage.k8s.io/v1, Resource=storageclasses
-  headers: NAME | PROVISIONER | RECLAIMPOLICY | VOLUMEBINDINGMODE | ALLOWVOLUMEEXPANSION | LABELS | VALID | AGE
-  row: sample | kubernetes.io/no-provisioner | Delete | WaitForFirstConsumer | true | app=api,node-role.kubernetes.io/worker= |  | 
+  headers: NAME | PROVISIONER | RECLAIMPOLICY | VOLUMEBINDINGMODE | ALLOWVOLUMEEXPANSION | LABELS | AGE
+  row: sample | kubernetes.io/no-provisioner | Delete | WaitForFirstConsumer | true | app=api,node-role.kubernetes.io/worker= | 
 storage.k8s.io/v1, Resource=volumeattachments
   headers: NAME | ATTACHER | PV | NODE | ATTACHED | AGE
   row: sample | csi.example.com | pv-a | node-a | true | 

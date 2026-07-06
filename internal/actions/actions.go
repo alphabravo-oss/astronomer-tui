@@ -27,9 +27,10 @@ type Action struct {
 
 func CatalogFor(kind string) []Action {
 	common := []Action{
-		{Name: "describe", Key: "enter", Description: "Open resource details"},
+		{Name: "describe", Key: "d", Description: "Describe resource with events"},
+		{Name: "yaml", Key: "y", Description: "View resource YAML"},
 		{Name: "edit", Key: "e", Description: "Edit YAML in $EDITOR", Destructive: true},
-		{Name: "delete", Key: "d", Description: "Delete selected resource", Destructive: true},
+		{Name: "delete", Key: "ctrl-d", Description: "Delete selected resource", Destructive: true},
 	}
 	switch kind {
 	case "Deployment", "StatefulSet":

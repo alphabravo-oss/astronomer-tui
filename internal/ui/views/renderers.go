@@ -132,14 +132,14 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 
 func Builtins() map[schema.GroupVersionResource]Renderer {
 	renderers := []Renderer{
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Columns: []string{"NAMESPACE", "NAME", "VS", "PF", "READY", "STATUS", "RESTARTS", "LAST RESTART", "CPU", "CPU/RL", "%CPU/R", "%CPU/L", "MEM", "MEM/RL", "%MEM/R", "%MEM/L", "GPU/RL", "IP", "NODE", "SERVICE-ACCOUNT", "NOMINATED NODE", "READINESS GATES", "QOS", "LABELS", "VALID", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, Columns: []string{"NAMESPACE", "NAME", "VS", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "VALID", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "services"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "EXTERNAL-IP", "SELECTOR", "PORTS", "LABELS", "VALID", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Columns: []string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "LAST RESTART", "IP", "NODE", "SERVICE-ACCOUNT", "NOMINATED NODE", "READINESS GATES", "QOS", "LABELS", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, Columns: []string{"NAMESPACE", "NAME", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "services"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "EXTERNAL-IP", "SELECTOR", "PORTS", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "endpoints"}, Columns: []string{"NAMESPACE", "NAME", "ENDPOINTS", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, Columns: []string{"NAMESPACE", "NAME", "DATA", "VALID", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "secrets"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "DATA", "VALID", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}, Columns: []string{"NAME", "STATUS", "LABELS", "VALID", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "nodes"}, Columns: []string{"NAME", "STATUS", "ROLE", "ARCH", "TAINTS", "VERSION", "OS-IMAGE", "KERNEL", "INTERNAL-IP", "EXTERNAL-IP", "PODS", "CPU", "CPU/A", "%CPU", "MEM", "MEM/A", "%MEM", "GPU/A", "GPU/C", "SH-GPU/A", "SH-GPU/C", "LABELS", "VALID", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, Columns: []string{"NAMESPACE", "NAME", "DATA", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "secrets"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "DATA", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}, Columns: []string{"NAME", "STATUS", "LABELS", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "nodes"}, Columns: []string{"NAME", "STATUS", "ROLE", "ARCH", "TAINTS", "VERSION", "OS-IMAGE", "KERNEL", "INTERNAL-IP", "EXTERNAL-IP", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "events"}, Columns: []string{"LAST SEEN", "TYPE", "REASON", "OBJECT", "MESSAGE"}},
 	}
 	for name, columns := range builtinColumns() {
@@ -154,25 +154,25 @@ func Builtins() map[schema.GroupVersionResource]Renderer {
 
 func builtinColumns() map[string][]string {
 	return map[string][]string{
-		"statefulsets":             {"NAMESPACE", "NAME", "VS", "READY", "SELECTOR", "SERVICE", "CONTAINERS", "IMAGES", "LABELS", "VALID", "AGE"},
-		"daemonsets":               {"NAMESPACE", "NAME", "VS", "DESIRED", "CURRENT", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "VALID", "AGE"},
-		"jobs":                     {"NAMESPACE", "NAME", "VS", "COMPLETIONS", "DURATION", "SELECTOR", "CONTAINERS", "IMAGES", "VALID", "AGE"},
-		"cronjobs":                 {"NAMESPACE", "NAME", "VS", "SCHEDULE", "SUSPEND", "ACTIVE", "LAST_SCHEDULE", "SELECTOR", "CONTAINERS", "IMAGES", "LABELS", "VALID", "AGE"},
-		"replicasets":              {"NAMESPACE", "NAME", "VS", "DESIRED", "CURRENT", "READY", "CONTAINERS", "IMAGES", "SELECTOR", "VALID", "AGE"},
+		"statefulsets":             {"NAMESPACE", "NAME", "READY", "SELECTOR", "SERVICE", "CONTAINERS", "IMAGES", "LABELS", "AGE"},
+		"daemonsets":               {"NAMESPACE", "NAME", "DESIRED", "CURRENT", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "AGE"},
+		"jobs":                     {"NAMESPACE", "NAME", "COMPLETIONS", "DURATION", "SELECTOR", "CONTAINERS", "IMAGES", "AGE"},
+		"cronjobs":                 {"NAMESPACE", "NAME", "SCHEDULE", "SUSPEND", "ACTIVE", "LAST_SCHEDULE", "SELECTOR", "CONTAINERS", "IMAGES", "LABELS", "AGE"},
+		"replicasets":              {"NAMESPACE", "NAME", "DESIRED", "CURRENT", "READY", "CONTAINERS", "IMAGES", "SELECTOR", "AGE"},
 		"horizontalpodautoscalers": {"NAME", "NAMESPACE", "REFERENCE", "TARGETS", "MINPODS", "MAXPODS", "REPLICAS", "AGE"},
-		"poddisruptionbudgets":     {"NAMESPACE", "NAME", "MIN-AVAILABLE", "MAX-UNAVAILABLE", "ALLOWED-DISRUPTIONS", "CURRENT", "DESIRED", "EXPECTED", "LABELS", "VALID", "AGE"},
+		"poddisruptionbudgets":     {"NAMESPACE", "NAME", "MIN-AVAILABLE", "MAX-UNAVAILABLE", "ALLOWED-DISRUPTIONS", "CURRENT", "DESIRED", "EXPECTED", "LABELS", "AGE"},
 		"ingresses":                {"NAME", "NAMESPACE", "CLASS", "HOSTS", "ADDRESS", "PORTS", "AGE"},
 		"endpointslices":           {"NAMESPACE", "NAME", "ADDRESSTYPE", "PORTS", "ENDPOINTS", "AGE"},
-		"networkpolicies":          {"NAMESPACE", "NAME", "POD-SELECTOR", "ING-SELECTOR", "ING-PORTS", "ING-BLOCK", "EGR-SELECTOR", "EGR-PORTS", "EGR-BLOCK", "LABELS", "VALID", "AGE"},
-		"persistentvolumes":        {"NAME", "CAPACITY", "ACCESS MODES", "RECLAIM POLICY", "STATUS", "CLAIM", "STORAGECLASS", "REASON", "VOLUMEMODE", "LABELS", "VALID", "AGE"},
-		"persistentvolumeclaims":   {"NAMESPACE", "NAME", "STATUS", "VOLUME", "CAPACITY", "ACCESS MODES", "STORAGECLASS", "LABELS", "VALID", "AGE"},
-		"storageclasses":           {"NAME", "PROVISIONER", "RECLAIMPOLICY", "VOLUMEBINDINGMODE", "ALLOWVOLUMEEXPANSION", "LABELS", "VALID", "AGE"},
+		"networkpolicies":          {"NAMESPACE", "NAME", "POD-SELECTOR", "ING-SELECTOR", "ING-PORTS", "ING-BLOCK", "EGR-SELECTOR", "EGR-PORTS", "EGR-BLOCK", "LABELS", "AGE"},
+		"persistentvolumes":        {"NAME", "CAPACITY", "ACCESS MODES", "RECLAIM POLICY", "STATUS", "CLAIM", "STORAGECLASS", "REASON", "VOLUMEMODE", "LABELS", "AGE"},
+		"persistentvolumeclaims":   {"NAMESPACE", "NAME", "STATUS", "VOLUME", "CAPACITY", "ACCESS MODES", "STORAGECLASS", "LABELS", "AGE"},
+		"storageclasses":           {"NAME", "PROVISIONER", "RECLAIMPOLICY", "VOLUMEBINDINGMODE", "ALLOWVOLUMEEXPANSION", "LABELS", "AGE"},
 		"volumeattachments":        {"NAME", "ATTACHER", "PV", "NODE", "ATTACHED", "AGE"},
-		"roles":                    {"NAMESPACE", "NAME", "LABELS", "VALID", "AGE"},
-		"rolebindings":             {"NAMESPACE", "NAME", "ROLE", "KIND", "SUBJECTS", "LABELS", "VALID", "AGE"},
+		"roles":                    {"NAMESPACE", "NAME", "LABELS", "AGE"},
+		"rolebindings":             {"NAMESPACE", "NAME", "ROLE", "KIND", "SUBJECTS", "LABELS", "AGE"},
 		"clusterroles":             {"NAME", "LABELS", "AGE"},
 		"clusterrolebindings":      {"NAME", "CLUSTERROLE", "SUBJECT-KIND", "SUBJECTS", "LABELS", "AGE"},
-		"serviceaccounts":          {"NAMESPACE", "NAME", "SECRET", "LABELS", "VALID", "AGE"},
+		"serviceaccounts":          {"NAMESPACE", "NAME", "SECRET", "LABELS", "AGE"},
 		"apiservices":              {"NAME", "SERVICE", "AVAILABLE", "AGE"},
 		"leases":                   {"NAME", "NAMESPACE", "HOLDER", "AGE"},
 	}
@@ -183,10 +183,11 @@ func SortRows(rows [][]Cell, col int, desc bool) {
 		if col >= len(rows[i]) || col >= len(rows[j]) {
 			return false
 		}
+		c := CompareCellValues(rows[i][col].Text, rows[j][col].Text)
 		if desc {
-			return rows[i][col].Text > rows[j][col].Text
+			return c > 0
 		}
-		return rows[i][col].Text < rows[j][col].Text
+		return c < 0
 	})
 }
 
@@ -237,8 +238,13 @@ func inferGVR(resource string) schema.GroupVersionResource {
 func field(obj map[string]any, name string) string {
 	switch strings.ToUpper(name) {
 	case "STATUS":
-		if ready := nodeReadyStatus(obj); ready != "" {
-			return ready
+		if _, hasNodeInfo, _ := unstructured.NestedMap(obj, "status", "nodeInfo"); hasNodeInfo {
+			if ready := nodeReadyStatus(obj); ready != "" {
+				return ready
+			}
+		}
+		if status := podStatus(obj); status != "" {
+			return status
 		}
 		if v, ok, _ := unstructured.NestedString(obj, "status", "phase"); ok {
 			return v
@@ -272,6 +278,34 @@ func field(obj map[string]any, name string) string {
 			}
 			return fmt.Sprintf("%d", total)
 		}
+	case "LAST RESTART":
+		return lastRestart(obj)
+	case "IP":
+		return firstString(obj, []string{"status", "podIP"})
+	case "SERVICE-ACCOUNT":
+		return firstString(obj, []string{"spec", "serviceAccountName"}, []string{"spec", "serviceAccount"})
+	case "QOS":
+		return nestedString(obj, "status", "qosClass")
+	case "NOMINATED NODE":
+		return nestedString(obj, "status", "nominatedNodeName")
+	case "READINESS GATES":
+		return readinessGates(obj)
+	case "ARCH":
+		return nestedString(obj, "status", "nodeInfo", "architecture")
+	case "OS-IMAGE":
+		return nestedString(obj, "status", "nodeInfo", "osImage")
+	case "KERNEL":
+		return nestedString(obj, "status", "nodeInfo", "kernelVersion")
+	case "TAINTS":
+		if taints, ok, _ := unstructured.NestedSlice(obj, "spec", "taints"); ok {
+			return fmt.Sprintf("%d", len(taints))
+		}
+	case "INTERNAL-IP":
+		return nodeAddress(obj, "InternalIP")
+	case "CONTAINERS":
+		return containerField(obj, "name")
+	case "IMAGES":
+		return containerField(obj, "image")
 	case "DESIRED", "REPLICAS":
 		return firstInt(obj, []string{"status", "desiredNumberScheduled"}, []string{"spec", "replicas"}, []string{"status", "replicas"}, []string{"status", "currentReplicas"})
 	case "CURRENT":
@@ -450,6 +484,9 @@ func field(obj map[string]any, name string) string {
 	case "VOLUMEMODE":
 		return nestedString(obj, "spec", "volumeMode")
 	case "EXTERNAL-IP":
+		if ip := nodeAddress(obj, "ExternalIP"); ip != "" {
+			return ip
+		}
 		return firstString(obj, []string{"spec", "externalIP"}, []string{"status", "loadBalancer", "ingress", "0", "ip"})
 	case "SELECTOR":
 		if selector, ok, _ := unstructured.NestedStringMap(obj, "spec", "selector", "matchLabels"); ok {
@@ -512,6 +549,173 @@ func podReady(obj map[string]any) string {
 		}
 	}
 	return fmt.Sprintf("%d/%d", ready, len(statuses))
+}
+
+// podStatus mirrors kubectl/k9s pod status derivation: it surfaces container
+// waiting/terminated reasons (CrashLoopBackOff, ImagePullBackOff, ...) instead
+// of the raw phase, and reports Terminating while a deletion is in flight.
+func podStatus(obj map[string]any) string {
+	if _, hasSpecContainers, _ := unstructured.NestedSlice(obj, "spec", "containers"); !hasSpecContainers {
+		return ""
+	}
+	phase := nestedString(obj, "status", "phase")
+	if reason := nestedString(obj, "status", "reason"); reason != "" {
+		phase = reason
+	}
+	if initStatus := podInitStatus(obj); initStatus != "" {
+		return initStatus
+	}
+	if phase != "Succeeded" {
+		if reason := containerStateReason(obj, "containerStatuses"); reason != "" {
+			phase = reason
+		}
+	}
+	if deletion := nestedString(obj, "metadata", "deletionTimestamp"); deletion != "" && phase != "NodeLost" {
+		return "Terminating"
+	}
+	if phase == "Succeeded" {
+		return "Completed"
+	}
+	return phase
+}
+
+func podInitStatus(obj map[string]any) string {
+	statuses, ok, _ := unstructured.NestedSlice(obj, "status", "initContainerStatuses")
+	if !ok {
+		return ""
+	}
+	for _, item := range statuses {
+		status, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if terminated, ok, _ := unstructured.NestedMap(status, "state", "terminated"); ok {
+			if code, _, _ := unstructured.NestedInt64(terminated, "exitCode"); code == 0 {
+				continue
+			}
+			if reason := nestedString(terminated, "reason"); reason != "" {
+				return "Init:" + reason
+			}
+			return "Init:Error"
+		}
+		if reason := nestedString(status, "state", "waiting", "reason"); reason != "" && reason != "PodInitializing" {
+			return "Init:" + reason
+		}
+	}
+	return ""
+}
+
+func containerStateReason(obj map[string]any, fieldName string) string {
+	statuses, ok, _ := unstructured.NestedSlice(obj, "status", fieldName)
+	if !ok {
+		return ""
+	}
+	for _, item := range statuses {
+		status, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if reason := nestedString(status, "state", "waiting", "reason"); reason != "" {
+			return reason
+		}
+		if reason := nestedString(status, "state", "terminated", "reason"); reason != "" && reason != "Completed" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func lastRestart(obj map[string]any) string {
+	statuses, ok, _ := unstructured.NestedSlice(obj, "status", "containerStatuses")
+	if !ok {
+		return ""
+	}
+	var latest time.Time
+	for _, item := range statuses {
+		status, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		value := nestedString(status, "lastState", "terminated", "finishedAt")
+		if value == "" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil && parsed.After(latest) {
+			latest = parsed
+		}
+	}
+	if latest.IsZero() {
+		return ""
+	}
+	return age(latest)
+}
+
+func readinessGates(obj map[string]any) string {
+	gates, ok, _ := unstructured.NestedSlice(obj, "spec", "readinessGates")
+	if !ok || len(gates) == 0 {
+		return ""
+	}
+	conditions, _, _ := unstructured.NestedSlice(obj, "status", "conditions")
+	passed := 0
+	for _, item := range gates {
+		gate, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		want := nestedString(gate, "conditionType")
+		for _, cond := range conditions {
+			condition, ok := cond.(map[string]any)
+			if !ok || nestedString(condition, "type") != want {
+				continue
+			}
+			if nestedString(condition, "status") == "True" {
+				passed++
+			}
+			break
+		}
+	}
+	return fmt.Sprintf("%d/%d", passed, len(gates))
+}
+
+func containerField(obj map[string]any, key string) string {
+	paths := [][]string{
+		{"spec", "template", "spec", "containers"},
+		{"spec", "jobTemplate", "spec", "template", "spec", "containers"},
+		{"spec", "containers"},
+	}
+	for _, path := range paths {
+		containers, ok, _ := unstructured.NestedSlice(obj, path...)
+		if !ok {
+			continue
+		}
+		values := make([]string, 0, len(containers))
+		for _, item := range containers {
+			if container, ok := item.(map[string]any); ok {
+				if value := nestedString(container, key); value != "" {
+					values = append(values, value)
+				}
+			}
+		}
+		return strings.Join(values, ",")
+	}
+	return ""
+}
+
+func nodeAddress(obj map[string]any, addressType string) string {
+	addresses, ok, _ := unstructured.NestedSlice(obj, "status", "addresses")
+	if !ok {
+		return ""
+	}
+	for _, item := range addresses {
+		address, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if nestedString(address, "type") == addressType {
+			return nestedString(address, "address")
+		}
+	}
+	return ""
 }
 
 func nodeReadyStatus(obj map[string]any) string {

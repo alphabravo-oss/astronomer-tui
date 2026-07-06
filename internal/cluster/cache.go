@@ -4,9 +4,11 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -171,6 +173,57 @@ func DiscoverResources(client *Client) ([]schema.GroupVersionResource, error) {
 		}
 	}
 	return out, nil
+}
+
+type ResolvedResource struct {
+	GVR        schema.GroupVersionResource
+	Namespaced bool
+}
+
+// ResolveResource maps a user-typed resource name (plural, singular, short
+// name, kind, or plural.group) to a served GVR via API discovery. This is what
+// lets `:mycrds` work for any installed CRD or aggregated API.
+func ResolveResource(disco interface {
+	ServerPreferredResources() ([]*metav1.APIResourceList, error)
+}, name string) (ResolvedResource, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || disco == nil {
+		return ResolvedResource{}, false
+	}
+	lists, err := disco.ServerPreferredResources()
+	if err != nil && len(lists) == 0 {
+		return ResolvedResource{}, false
+	}
+	for _, list := range lists {
+		gv, parseErr := schema.ParseGroupVersion(list.GroupVersion)
+		if parseErr != nil {
+			continue
+		}
+		for _, resource := range list.APIResources {
+			if containsSlash(resource.Name) {
+				continue
+			}
+			if resourceMatches(resource, gv.Group, name) {
+				return ResolvedResource{GVR: gv.WithResource(resource.Name), Namespaced: resource.Namespaced}, true
+			}
+		}
+	}
+	return ResolvedResource{}, false
+}
+
+func resourceMatches(resource metav1.APIResource, group, name string) bool {
+	if resource.Name == name || strings.ToLower(resource.SingularName) == name || strings.ToLower(resource.Kind) == name {
+		return true
+	}
+	if group != "" && resource.Name+"."+group == name {
+		return true
+	}
+	for _, short := range resource.ShortNames {
+		if strings.ToLower(short) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func containsSlash(s string) bool {

@@ -37,7 +37,7 @@ var errTestExecShellMissing = errors.New("shell missing")
 
 func TestHelpTextUsesActionCatalog(t *testing.T) {
 	text := HelpText(actions.CatalogFor("Pod"))
-	for _, want := range []string{"exec", "logs", "port-forward", "Ctrl+P", "enter", "filter", "sort", "delete", "command"} {
+	for _, want := range []string{"exec", "logs", "port-forward", "Ctrl+P", "describe", "yaml", "filter", "sort", "delete", "command"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected help text to contain %q: %s", want, text)
 		}
@@ -162,6 +162,81 @@ func TestParseNamespaceCommand(t *testing.T) {
 	}
 	if _, ok := parseCommand(":namespace"); ok {
 		t.Fatal("namespace command should require a value")
+	}
+}
+
+func TestParseNavigationCommands(t *testing.T) {
+	cmd, ok := parseCommand(":q")
+	if !ok || cmd.Kind != "quit" {
+		t.Fatalf("unexpected quit command %#v %v", cmd, ok)
+	}
+	cmd, ok = parseCommand(":ctx staging")
+	if !ok || cmd.Kind != "context" || cmd.Value != "staging" {
+		t.Fatalf("unexpected context command %#v %v", cmd, ok)
+	}
+	cmd, ok = parseCommand(":ctx")
+	if !ok || cmd.Kind != "palette" {
+		t.Fatalf("unexpected bare ctx command %#v %v", cmd, ok)
+	}
+	cmd, ok = parseCommand(":all")
+	if !ok || cmd.Kind != "namespace" || cmd.Value != "all" {
+		t.Fatalf("unexpected all command %#v %v", cmd, ok)
+	}
+}
+
+func TestRendererForUsesCRDPrinterColumns(t *testing.T) {
+	crd := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "widgets.example.com"},
+		"spec": map[string]any{
+			"group": "example.com",
+			"scope": "Cluster",
+			"names": map[string]any{"plural": "widgets", "kind": "Widget"},
+			"versions": []any{map[string]any{
+				"name":    "v1",
+				"served":  true,
+				"storage": true,
+				"additionalPrinterColumns": []any{map[string]any{
+					"name":     "Phase",
+					"type":     "string",
+					"jsonPath": ".status.phase",
+				}},
+			}},
+		},
+	}}
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(crdListGVK(), &unstructured.UnstructuredList{})
+	dynamic := dynamicfake.NewSimpleDynamicClient(scheme, crd)
+	app := New(Options{Client: &cluster.Client{Dynamic: dynamic, Namespace: "default"}})
+	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+	renderer := app.rendererFor(context.Background(), gvr)
+	headers := renderer.Header()
+	if len(headers) != 2 || headers[1].Name != "PHASE" {
+		t.Fatalf("expected CRD printer columns, got %#v", headers)
+	}
+	if got := app.namespaceFor(app.options.Client, gvr); got != "" {
+		t.Fatalf("expected cluster-scoped CRD to list all namespaces, got %q", got)
+	}
+	// Unknown resources still fall back to the generic renderer.
+	generic := app.rendererFor(context.Background(), schema.GroupVersionResource{Group: "other.io", Version: "v1", Resource: "things"})
+	if _, ok := generic.(views.GenericRenderer); !ok {
+		t.Fatalf("expected generic renderer fallback, got %T", generic)
+	}
+}
+
+func crdListGVK() schema.GroupVersionKind {
+	return schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinitionList"}
+}
+
+func TestSwitchNamespaceAllClearsScope(t *testing.T) {
+	app := New(Options{Client: &cluster.Client{Namespace: "default"}})
+	app.switchNamespace("all")
+	if app.options.Client.Namespace != "" {
+		t.Fatalf("expected all namespaces, got %q", app.options.Client.Namespace)
+	}
+	if got := displayNamespace(app.options.Client.Namespace); got != "all" {
+		t.Fatalf("expected title namespace 'all', got %q", got)
 	}
 }
 

@@ -20,11 +20,29 @@ func parseCommand(input string) (Command, bool) {
 		return Command{}, false
 	}
 	switch parts[0] {
+	case "q", "quit", "q!":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "quit"}, true
 	case "ns", "namespace":
 		if len(parts) != 2 {
 			return Command{}, false
 		}
 		return Command{Kind: "namespace", Value: parts[1]}, true
+	case "ctx", "context", "contexts":
+		if len(parts) == 2 {
+			return Command{Kind: "context", Value: parts[1]}, true
+		}
+		if len(parts) == 1 {
+			return Command{Kind: "palette"}, true
+		}
+		return Command{}, false
+	case "all":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "namespace", Value: "all"}, true
 	case "pf", "port-forward", "portforwards":
 		if len(parts) != 1 {
 			return Command{}, false

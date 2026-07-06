@@ -191,6 +191,8 @@ func (a *App) executeActionEntry(entry palette.Entry) bool {
 	case "port-forward":
 		a.showPortForwardPlan()
 	case "describe":
+		a.showDescribe()
+	case "yaml":
 		a.showDetail()
 	default:
 		return false
