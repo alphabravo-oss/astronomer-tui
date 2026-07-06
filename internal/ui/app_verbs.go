@@ -222,6 +222,81 @@ func (a *App) runDrain(name string) {
 	}()
 }
 
+// showRollout opens a revision picker for the selected workload; Enter rolls
+// back to the chosen revision.
+func (a *App) showRollout() {
+	obj := a.selectedObject()
+	if obj == nil {
+		return
+	}
+	kind := obj.GetKind()
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet":
+	default:
+		a.Flash(FlashInfo, "rollout is only available for deployments/statefulsets/daemonsets")
+		return
+	}
+	if a.options.Client == nil || a.options.Client.Clientset == nil {
+		a.Flash(FlashError, "kubernetes clientset is required")
+		return
+	}
+	ns, name := obj.GetNamespace(), obj.GetName()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	revs, err := actions.RolloutRevisions(ctx, a.options.Client.Clientset, kind, ns, name)
+	if err != nil {
+		a.Flash(FlashError, "rollout history: %s", err.Error())
+		return
+	}
+	if len(revs) < 2 {
+		a.Flash(FlashInfo, "no previous revision to roll back to")
+		return
+	}
+	list := tview.NewList().ShowSecondaryText(true)
+	for _, r := range revs {
+		rev := r
+		cause := rev.Cause
+		if cause == "" {
+			cause = "(no change-cause)"
+		}
+		list.AddItem(fmt.Sprintf("revision %d", rev.Number), cause, 0, func() {
+			a.closeModal()
+			a.runRollout(kind, ns, name, rev.Number)
+		})
+	}
+	list.SetTitle(fmt.Sprintf(" rollback %s/%s ", kind, name)).SetBorder(true)
+	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Rune() == 'q' {
+			a.closeModal()
+			return nil
+		}
+		return event
+	})
+	a.showModal(list)
+}
+
+func (a *App) runRollout(kind, ns, name string, toRevision int64) {
+	ctxName := a.clientContext()
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := actions.RolloutUndo(ctx, a.options.Client.Clientset, kind, ns, name, toRevision); err != nil {
+			a.Flash(FlashError, "rollout undo: %s", err.Error())
+			return
+		}
+		a.Flash(FlashInfo, "rolled %s/%s back to revision %d", kind, name, toRevision)
+	}
+	if err := safety.Authorize(a.options.Config, ctxName, safety.Restart, ""); err == safety.ErrReadOnly {
+		a.showMessage("Blocked", "context is read-only")
+		return
+	}
+	if safety.RequiresConfirmation(a.options.Config, ctxName, safety.Restart) {
+		a.confirmDestructive(fmt.Sprintf("roll %s/%s back to revision %d", kind, name, toRevision), safety.Restart, run)
+		return
+	}
+	run()
+}
+
 // showSecretDecode renders a Secret's data with base64 values decoded.
 func (a *App) showSecretDecode() {
 	obj := a.selectedObject()

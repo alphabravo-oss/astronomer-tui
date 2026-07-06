@@ -233,6 +233,7 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(runeBinding('u', "uncordon", "Uncordon node", "table", true, wrap(func() { a.setCordon(false) })))
 	k.Add(runeBinding('D', "drain", "Drain node", "table", true, wrap(a.showDrain)))
 	k.Add(runeBinding('r', "restart", "Rollout restart", "table", true, wrap(a.showRestart)))
+	k.Add(keyBinding(tcell.KeyCtrlL, "rollout-undo", "Rollout undo (pick revision)", "table", true, wrap(a.showRollout)))
 	k.Add(runeBinding('t', "trigger", "Trigger job from cronjob", "table", true, wrap(a.showTrigger)))
 	k.Add(runeBinding('z', "suspend", "Toggle cronjob suspend", "table", true, wrap(a.showSuspendToggle)))
 	k.Add(runeBinding('l', "logs", "Open logs", "table", true, wrap(a.showLogsPlan)))
