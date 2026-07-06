@@ -990,6 +990,32 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+func TestReselectByKeyPinsSelection(t *testing.T) {
+	app := New(Options{})
+	visible := []*unstructured.Unstructured{
+		namedObject("api", "default"),
+		namedObject("db", "default"),
+		namedObject("worker", "default"),
+	}
+	// Seed the table so Select has rows to land on.
+	for i, obj := range visible {
+		app.table.SetCell(i+1, 0, tableCellText(obj.GetName()))
+	}
+	app.reselectByKey("default/worker", visible)
+	if row, _ := app.table.GetSelection(); row != 3 {
+		t.Fatalf("expected row 3 (worker), got %d", row)
+	}
+	// Missing key leaves selection unchanged.
+	app.reselectByKey("default/gone", visible)
+	if row, _ := app.table.GetSelection(); row != 3 {
+		t.Fatalf("expected selection to stay at row 3, got %d", row)
+	}
+}
+
+func tableCellText(text string) *tview.TableCell {
+	return tview.NewTableCell(text)
+}
+
 func namedObject(name, namespace string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetName(name)

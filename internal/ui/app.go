@@ -83,6 +83,7 @@ type App struct {
 	flashClear       *time.Timer
 	runCtx           context.Context //nolint:containedctx // retained so registry key actions can reach the run context.
 	tableKeymap      *Keymap
+	lastSelKey       string
 }
 
 func New(options Options) *App {
@@ -102,6 +103,7 @@ func New(options Options) *App {
 		pluginFile: pluginFile,
 		skin:       resolveSkin(options),
 	}
+	app.table.SetSelectionChangedFunc(func(row, _ int) { app.rememberSelection(row) })
 	app.applySkin()
 	return app
 }
@@ -346,15 +348,57 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 	a.visibleObjects = visible
 	a.mu.Unlock()
 	a.app.QueueUpdateDraw(func() {
-		a.table.Clear()
-		a.drawHeader(renderer)
-		for row, cells := range rows {
-			for col, cell := range cells {
-				a.setTableCell(row+1, col, cell)
-			}
-		}
+		a.paintRows(renderer, rows)
+		a.reselectByKey(a.selKey(), visible)
 		a.updateTitle()
 	})
+}
+
+// paintRows clears and repopulates the table body from pre-rendered rows.
+func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell) {
+	a.table.Clear()
+	a.drawHeader(renderer)
+	for row, cells := range rows {
+		for col, cell := range cells {
+			a.setTableCell(row+1, col, cell)
+		}
+	}
+}
+
+func objectKey(obj *unstructured.Unstructured) string {
+	if obj == nil {
+		return ""
+	}
+	return obj.GetNamespace() + "/" + obj.GetName()
+}
+
+// selKey returns the remembered identity of the selected row.
+func (a *App) selKey() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.lastSelKey
+}
+
+// rememberSelection records the identity of the row at the given table row so
+// selection survives watch-driven table rebuilds.
+func (a *App) rememberSelection(row int) {
+	obj := selectedObject(a.visibleObjectsSnapshot(), row)
+	a.mu.Lock()
+	a.lastSelKey = objectKey(obj)
+	a.mu.Unlock()
+}
+
+// reselectByKey restores the cursor to the row whose object matches key.
+func (a *App) reselectByKey(key string, visible []*unstructured.Unstructured) {
+	if key == "" {
+		return
+	}
+	for i, obj := range visible {
+		if objectKey(obj) == key {
+			a.table.Select(i+1, 0)
+			return
+		}
+	}
 }
 
 func (a *App) updateTitle() {
@@ -968,13 +1012,8 @@ func (a *App) renderCurrent() {
 	a.mu.Lock()
 	a.visibleObjects = visible
 	a.mu.Unlock()
-	a.table.Clear()
-	a.drawHeader(a.renderer)
-	for row, cells := range rows {
-		for col, cell := range cells {
-			a.setTableCell(row+1, col, cell)
-		}
-	}
+	a.paintRows(a.renderer, rows)
+	a.reselectByKey(a.selKey(), visible)
 	a.updateTitle()
 }
 
