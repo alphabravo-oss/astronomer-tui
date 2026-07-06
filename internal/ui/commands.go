@@ -10,6 +10,26 @@ type Command struct {
 	Value string
 }
 
+// commandSpec documents a command for the help overlay and autocomplete. The
+// dispatch itself lives in parseCommand; this catalog is the single source of
+// truth for how commands are described.
+type commandSpec struct {
+	usage string
+	help  string
+}
+
+func commandCatalog() []commandSpec {
+	return []commandSpec{
+		{usage: ":<resource>", help: "Switch view to any resource/alias/CRD"},
+		{usage: ":ns <name>|all", help: "Switch namespace (all = every namespace)"},
+		{usage: ":ctx [name]", help: "Switch context, or open the context palette"},
+		{usage: ":all", help: "Show all namespaces"},
+		{usage: ":pf", help: "Port-forward manager"},
+		{usage: ":flash", help: "Recent status messages"},
+		{usage: ":q", help: "Quit astrotui"},
+	}
+}
+
 func parseCommand(input string) (Command, bool) {
 	normalized := strings.TrimPrefix(strings.TrimSpace(input), ":")
 	if normalized == "" {

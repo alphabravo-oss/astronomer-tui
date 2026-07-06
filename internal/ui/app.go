@@ -79,6 +79,8 @@ type App struct {
 	crdRenderers     map[schema.GroupVersionResource]views.Renderer
 	metrics          metricsSnapshotter
 	flashClear       *time.Timer
+	runCtx           context.Context //nolint:containedctx // retained so registry key actions can reach the run context.
+	tableKeymap      *Keymap
 }
 
 func New(options Options) *App {
@@ -124,70 +126,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	a.watchSkinUpdates(ctx)
 
+	a.runCtx = ctx
 	a.table.SetTitle(fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, gvr.Resource)).SetBorder(true)
+	a.tableKeymap = a.buildTableKeymap()
 	a.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Rune() == '?' {
-			a.safe(a.showHelp)
-			return nil
-		}
-		if event.Key() == tcell.KeyCtrlP {
-			a.safe(a.showPalette)
-			return nil
-		}
-		if event.Key() == tcell.KeyCtrlE {
-			a.safe(a.showFailureAI)
-			return nil
-		}
-		if event.Key() == tcell.KeyEnter {
-			a.safe(a.showDescribe)
-			return nil
-		}
-		if event.Rune() == '/' {
-			a.safe(a.showFilter)
-			return nil
-		}
-		if event.Rune() == ':' {
-			a.safe(func() { a.showCommand(ctx) })
-			return nil
-		}
-		if event.Key() == tcell.KeyCtrlD {
-			a.safe(a.showDelete)
-			return nil
-		}
-		if event.Rune() == 'd' {
-			a.safe(a.showDescribe)
-			return nil
-		}
-		if event.Rune() == 'y' {
-			a.safe(a.showDetail)
-			return nil
-		}
-		if event.Rune() == 'e' {
-			a.safe(a.showEdit)
-			return nil
-		}
-		if event.Rune() == 'l' {
-			a.safe(a.showLogsPlan)
-			return nil
-		}
-		if event.Rune() == 'x' {
-			a.safe(a.showExecPlan)
-			return nil
-		}
-		if event.Rune() == 'f' {
-			a.safe(a.showPortForwardPlan)
-			return nil
-		}
-		if event.Rune() == 's' {
-			a.safe(a.showScale)
-			return nil
-		}
-		if event.Rune() == 'r' {
-			a.safe(a.showRestart)
-			return nil
-		}
-		if event.Rune() == '0' {
-			a.safe(func() { a.switchNamespace("all") })
+		if a.tableKeymap.handle(event) {
 			return nil
 		}
 		if col, ok := sortColumnFromRune(event.Rune()); ok {
@@ -212,6 +155,30 @@ func (a *App) Run(ctx context.Context) error {
 		_ = a.options.SessionStore.Save(a.sessionState())
 	}
 	return err
+}
+
+// buildTableKeymap registers the resource-table bindings in the registry so the
+// help overlay (and later hotkeys.yaml) can introspect them.
+func (a *App) buildTableKeymap() *Keymap {
+	k := &Keymap{}
+	wrap := func(fn func()) func() { return func() { a.safe(fn) } }
+	k.Add(keyBinding(tcell.KeyEnter, "describe", "Describe resource with events", "table", true, wrap(a.showDescribe)))
+	k.Add(runeBinding('d', "describe", "Describe resource with events", "table", true, wrap(a.showDescribe)))
+	k.Add(runeBinding('y', "yaml", "View resource YAML", "table", true, wrap(a.showDetail)))
+	k.Add(runeBinding('e', "edit", "Edit YAML in $EDITOR", "table", true, wrap(a.showEdit)))
+	k.Add(keyBinding(tcell.KeyCtrlD, "delete", "Delete selected resource", "table", true, wrap(a.showDelete)))
+	k.Add(runeBinding('s', "scale", "Scale replicas", "table", true, wrap(a.showScale)))
+	k.Add(runeBinding('r', "restart", "Rollout restart", "table", true, wrap(a.showRestart)))
+	k.Add(runeBinding('l', "logs", "Open logs", "table", true, wrap(a.showLogsPlan)))
+	k.Add(runeBinding('x', "exec", "Exec into pod", "table", true, wrap(a.showExecPlan)))
+	k.Add(runeBinding('f', "port-forward", "Forward a port", "table", true, wrap(a.showPortForwardPlan)))
+	k.Add(runeBinding('/', "filter", "Filter visible rows", "table", true, wrap(a.showFilter)))
+	k.Add(runeBinding(':', "command", "Command prompt", "table", true, wrap(func() { a.showCommand(a.runCtx) })))
+	k.Add(runeBinding('0', "all-namespaces", "Show all namespaces", "table", true, wrap(func() { a.switchNamespace("all") })))
+	k.Add(keyBinding(tcell.KeyCtrlP, "palette", "Command palette", "global", true, wrap(a.showPalette)))
+	k.Add(keyBinding(tcell.KeyCtrlE, "ai-explain", "AI explain selection", "global", true, wrap(a.showFailureAI)))
+	k.Add(runeBinding('?', "help", "Show this overlay", "global", true, wrap(a.showHelp)))
+	return k
 }
 
 func initialResourceGVR(state session.State) schema.GroupVersionResource {
@@ -496,10 +463,36 @@ func (a *App) lookupCRDRenderer(ctx context.Context, gvr schema.GroupVersionReso
 
 func (a *App) showHelp() {
 	modal := tview.NewModal().
-		SetText(HelpText(a.actionCatalog())).
+		SetText(a.helpOverlayText()).
 		AddButtons([]string{"OK"}).
 		SetDoneFunc(func(_ int, _ string) { a.closeModal() })
 	a.showModal(modal)
+}
+
+// helpOverlayText builds the help overlay from the live keymap registry and
+// command catalog, so it never drifts from the actual bindings.
+func (a *App) helpOverlayText() string {
+	lines := []string{"Keys"}
+	if a.tableKeymap != nil {
+		for _, row := range a.tableKeymap.HelpRows() {
+			lines = append(lines, fmt.Sprintf("  %-8s %s", row[0], row[1]))
+		}
+	}
+	lines = append(lines, "", "Commands")
+	for _, spec := range commandCatalog() {
+		lines = append(lines, fmt.Sprintf("  %-14s %s", spec.usage, spec.help))
+	}
+	if len(a.pluginFile.Plugins) > 0 {
+		lines = append(lines, "", "Plugins")
+		for name, plugin := range a.pluginFile.Plugins {
+			key := plugin.ShortCut
+			if key == "" {
+				key = name
+			}
+			lines = append(lines, fmt.Sprintf("  %-8s %s", key, plugin.Description))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a *App) showFilter() {
