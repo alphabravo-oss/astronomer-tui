@@ -78,6 +78,11 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "flash"}, true
+	case "alias", "aliases":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "aliases-view"}, true
 	default:
 		return Command{Kind: "resource", Value: parts[0]}, true
 	}

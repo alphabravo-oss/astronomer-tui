@@ -249,6 +249,7 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(keyBinding(tcell.KeyCtrlA, "mark-all", "Mark all visible rows", "table", true, wrap(a.markAllVisible)))
 	k.Add(keyBinding(tcell.KeyCtrlBackslash, "clear-marks", "Clear all marks", "table", true, wrap(a.clearMarks)))
 	k.Add(keyBinding(tcell.KeyCtrlW, "wide", "Toggle wide columns", "table", true, wrap(a.toggleWide)))
+	k.Add(keyBinding(tcell.KeyCtrlS, "screendump", "Dump table to CSV", "table", true, wrap(a.screendumpTable)))
 	k.Add(keyBinding(tcell.KeyCtrlP, "palette", "Command palette", "global", true, wrap(a.showPalette)))
 	k.Add(keyBinding(tcell.KeyCtrlE, "ai-explain", "AI explain selection", "global", true, wrap(a.showFailureAI)))
 	k.Add(runeBinding('?', "help", "Show this overlay", "global", true, wrap(a.showHelp)))
@@ -819,6 +820,9 @@ func (a *App) showCommand(ctx context.Context) {
 				return
 			case "flash":
 				a.showFlashLog()
+				return
+			case "aliases-view":
+				a.showAliasesView()
 				return
 			}
 		}
