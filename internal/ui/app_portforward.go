@@ -103,19 +103,28 @@ func (a *App) startPortForwardSpec(spec actions.PortForwardSpec) {
 }
 
 func (a *App) runPortForward(ctx context.Context, client *cluster.Client, spec actions.PortForwardSpec) {
-	if a.options.PortForwardRun != nil {
-		if err := a.options.PortForwardRun(ctx, spec); err != nil && ctx.Err() == nil {
-			a.Flash(FlashError, "port-forward %s %d:%d failed: %s", spec.Resource, spec.Local, spec.Remote, err.Error())
+	finish := func(err error) {
+		if a.options.PortForwards == nil {
+			return
 		}
+		switch {
+		case err != nil && ctx.Err() == nil:
+			a.options.PortForwards.SetStatus(spec.ID(), actions.PortForwardFailed, err.Error())
+			a.Flash(FlashError, "port-forward %s %d:%d failed: %s", spec.Resource, spec.Local, spec.Remote, err.Error())
+		default:
+			a.options.PortForwards.SetStatus(spec.ID(), actions.PortForwardClosed, "")
+		}
+	}
+	if a.options.PortForwardRun != nil {
+		finish(a.options.PortForwardRun(ctx, spec))
 		return
 	}
 	if client == nil || client.Config == nil || client.Clientset == nil {
 		<-ctx.Done()
+		finish(nil)
 		return
 	}
-	if err := actions.RunPortForward(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard); err != nil && ctx.Err() == nil {
-		a.Flash(FlashError, "port-forward %s %d:%d failed: %s", spec.Resource, spec.Local, spec.Remote, err.Error())
-	}
+	finish(actions.RunPortForward(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard))
 }
 
 func (a *App) showPortForwardManager() {
@@ -145,22 +154,37 @@ func (a *App) showPortForwardManager() {
 
 func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {
 	table.Clear()
-	headers := []string{"ID", "NAMESPACE", "RESOURCE", "LOCAL", "REMOTE", "SINCE"}
+	headers := []string{"NAMESPACE", "RESOURCE", "LOCAL", "REMOTE", "STATUS", "SINCE"}
 	for col, header := range headers {
 		table.SetCell(0, col, tview.NewTableCell(header).SetTextColor(tcell.ColorAqua).SetSelectable(false))
 	}
 	sort.SliceStable(forwards, func(i, j int) bool { return forwards[i].ID < forwards[j].ID })
 	for row, forward := range forwards {
+		status := string(forward.Status)
+		if forward.Status == actions.PortForwardFailed && forward.Detail != "" {
+			status = "failed: " + forward.Detail
+		}
 		values := []string{
-			forward.ID,
 			forward.Namespace,
 			forward.Resource,
 			fmt.Sprint(forward.Local),
 			fmt.Sprint(forward.Remote),
+			status,
 			time.Since(forward.Since).Round(time.Second).String(),
 		}
 		for col, value := range values {
-			table.SetCell(row+1, col, tview.NewTableCell(value))
+			cell := tview.NewTableCell(value)
+			if col == 4 {
+				switch forward.Status {
+				case actions.PortForwardFailed:
+					cell.SetTextColor(tcell.ColorRed)
+				case actions.PortForwardClosed:
+					cell.SetTextColor(tcell.ColorGray)
+				case actions.PortForwardActive:
+					cell.SetTextColor(tcell.ColorGreen)
+				}
+			}
+			table.SetCell(row+1, col, cell)
 		}
 	}
 	if len(forwards) == 0 {

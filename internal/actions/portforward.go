@@ -20,6 +20,15 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
+// PortForwardStatus is the lifecycle state of a forward.
+type PortForwardStatus string
+
+const (
+	PortForwardActive PortForwardStatus = "active"
+	PortForwardFailed PortForwardStatus = "failed"
+	PortForwardClosed PortForwardStatus = "closed"
+)
+
 type PortForward struct {
 	ID        string
 	Local     int
@@ -27,6 +36,8 @@ type PortForward struct {
 	Remote    int
 	Since     time.Time
 	Namespace string
+	Status    PortForwardStatus
+	Detail    string // error detail when failed
 	stop      func()
 }
 
@@ -53,6 +64,7 @@ func NewPortForward(spec PortForwardSpec, stop func()) PortForward {
 		Remote:    spec.Remote,
 		Resource:  spec.Resource,
 		Namespace: spec.Namespace,
+		Status:    PortForwardActive,
 		stop:      stop,
 	}
 }
@@ -74,6 +86,28 @@ func (m *PortForwardManager) List() []PortForward {
 		out = append(out, forward)
 	}
 	return out
+}
+
+// SetStatus updates the lifecycle state of a tracked forward.
+func (m *PortForwardManager) SetStatus(id string, status PortForwardStatus, detail string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if forward, ok := m.forwards[id]; ok {
+		forward.Status = status
+		forward.Detail = detail
+		m.forwards[id] = forward
+	}
+}
+
+// PruneClosed removes forwards that closed/failed more than ttl ago.
+func (m *PortForwardManager) PruneClosed(ttl time.Duration, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, f := range m.forwards {
+		if f.Status != PortForwardActive && now.Sub(f.Since) > ttl {
+			delete(m.forwards, id)
+		}
+	}
 }
 
 func (m *PortForwardManager) Kill(id string) bool {

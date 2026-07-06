@@ -612,17 +612,21 @@ func TestExecTargetsAndPlanUsesPreferredContainer(t *testing.T) {
 func TestPortForwardManagerRows(t *testing.T) {
 	table := tview.NewTable().SetSelectable(true, false)
 	forwards := []actions.PortForward{
-		{ID: "default:pod/b:8081:8081", Namespace: "default", Resource: "pod/b", Local: 8081, Remote: 8081},
-		{ID: "default:pod/a:8080:8080", Namespace: "default", Resource: "pod/a", Local: 8080, Remote: 8080},
+		{ID: "default:pod/b:8081:8081", Namespace: "default", Resource: "pod/b", Local: 8081, Remote: 8081, Status: actions.PortForwardActive},
+		{ID: "default:pod/a:8080:8080", Namespace: "default", Resource: "pod/a", Local: 8080, Remote: 8080, Status: actions.PortForwardActive},
 	}
 	renderPortForwardRows(table, forwards)
 	table.Select(1, 0)
 	if got := portForwardIDAt(table, forwards); got != "default:pod/a:8080:8080" {
 		t.Fatalf("unexpected selected forward %q", got)
 	}
-	cell := table.GetCell(1, 2)
+	cell := table.GetCell(1, 1)
 	if cell == nil || cell.Text != "pod/a" {
 		t.Fatalf("expected sorted first forward row, got %#v", cell)
+	}
+	// STATUS column reflects the forward's state.
+	if s := table.GetCell(1, 4); s == nil || s.Text != "active" {
+		t.Fatalf("expected active status cell, got %#v", s)
 	}
 }
 

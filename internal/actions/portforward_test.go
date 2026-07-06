@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -91,5 +92,22 @@ func TestResolveServicePortForwardSpec(t *testing.T) {
 	noSelector := kubefake.NewSimpleClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "headless", Namespace: "default"}})
 	if _, err := ResolvePortForwardSpec(context.Background(), noSelector, PortForwardSpec{Namespace: "default", Resource: "service/headless", Local: 8080, Remote: 8080}); err == nil {
 		t.Fatal("expected selector error")
+	}
+}
+
+func TestPortForwardSetStatusAndPrune(t *testing.T) {
+	m := NewPortForwardManager()
+	m.Add(NewPortForward(PortForwardSpec{Namespace: "default", Resource: "pod/a", Local: 80, Remote: 80}, nil))
+	id := PortForwardSpec{Namespace: "default", Resource: "pod/a", Local: 80, Remote: 80}.ID()
+	m.SetStatus(id, PortForwardFailed, "boom")
+	got := m.List()
+	if len(got) != 1 || got[0].Status != PortForwardFailed || got[0].Detail != "boom" {
+		t.Fatalf("unexpected status %#v", got)
+	}
+	// Prune removes non-active forwards older than ttl.
+	future := got[0].Since.Add(2 * time.Minute)
+	m.PruneClosed(time.Minute, future)
+	if len(m.List()) != 0 {
+		t.Fatalf("expected failed forward pruned, got %#v", m.List())
 	}
 }
