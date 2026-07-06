@@ -380,18 +380,27 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 	a.visibleObjects = visible
 	a.mu.Unlock()
 	a.app.QueueUpdateDraw(func() {
-		a.paintRows(renderer, rows)
+		a.paintRows(renderer, rows, visible)
 		a.reselectByKey(a.selKey(), visible)
 		a.updateTitle()
 	})
 }
 
-// paintRows clears and repopulates the table body from pre-rendered rows.
-func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell) {
+// paintRows clears and repopulates the table body from pre-rendered rows,
+// applying per-row state coloring where a cell has no explicit color.
+func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell, visible []*unstructured.Unstructured) {
 	a.table.Clear()
 	a.drawHeader(renderer)
+	gvr := renderer.GVR()
 	for row, cells := range rows {
+		rowColor := ""
+		if row < len(visible) {
+			rowColor = views.StateColor(gvr, visible[row])
+		}
 		for col, cell := range cells {
+			if cell.Color == "" {
+				cell.Color = rowColor
+			}
 			a.setTableCell(row+1, col, cell)
 		}
 	}
@@ -1058,7 +1067,7 @@ func (a *App) renderCurrent() {
 	a.mu.Lock()
 	a.visibleObjects = visible
 	a.mu.Unlock()
-	a.paintRows(a.renderer, rows)
+	a.paintRows(a.renderer, rows, visible)
 	a.reselectByKey(a.selKey(), visible)
 	a.updateTitle()
 }
