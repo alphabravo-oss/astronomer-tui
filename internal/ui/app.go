@@ -92,6 +92,8 @@ type App struct {
 	running          bool
 	nsHistory        []string
 	wideMode         bool
+	cmdHistory       []string
+	histIdx          int
 }
 
 // isRunning reports whether the tview event loop is active, so background
@@ -762,8 +764,25 @@ func (a *App) showCommand(ctx context.Context) {
 	input := tview.NewInputField().
 		SetLabel(":").
 		SetFieldWidth(40)
+	input.SetAutocompleteFunc(func(current string) []string { return a.commandCompletions(current) })
+	input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyUp:
+			if cmd, ok := a.historyPrev(); ok {
+				input.SetText(cmd)
+			}
+			return nil
+		case tcell.KeyDown:
+			if cmd, ok := a.historyNext(); ok {
+				input.SetText(cmd)
+			}
+			return nil
+		}
+		return event
+	})
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
+			a.pushHistory(input.GetText())
 			command, ok := parseCommand(input.GetText())
 			if !ok {
 				a.showMessage("Unknown command", ":"+input.GetText())

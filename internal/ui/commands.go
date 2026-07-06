@@ -18,6 +18,11 @@ type commandSpec struct {
 	help  string
 }
 
+// commandTokens are the built-in command keywords (first token after ":").
+func commandTokens() []string {
+	return []string{"q", "quit", "ns", "ctx", "all", "pf", "flash", "alias"}
+}
+
 func commandCatalog() []commandSpec {
 	return []commandSpec{
 		{usage: ":<resource>", help: "Switch view to any resource/alias/CRD"},
