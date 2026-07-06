@@ -4,10 +4,51 @@ Date: 2026-07-06.
 Scope: code-level audit of `astrotui` against the k9s feature set, answering
 "is this as capable or more capable than k9s as a daily driver?"
 
-**Verdict: not yet.** The foundation (informer cache, palette, safety guard,
-logs, plugins, theming, AI hooks) is real and tested, but several core
-day-to-day k9s behaviors were missing or broken. This review closed the
-tractable gaps (see "Fixed in this pass") and ranks what remains.
+**Verdict (after the implementation pass): yes for daily-driver use.** The
+parity-plus plan ([`docs/plans/k9s-parity-plus-plan.md`](../plans/k9s-parity-plus-plan.md))
+has been executed through the foundational refactors and the high-value
+feature phases. astrotui now matches k9s on the core daily loop — browse,
+filter, drill down, describe, logs, exec/attach, edit, scale, restart,
+rollout verbs, port-forward, cordon/drain, bulk delete — with metrics
+visible, in any namespace scope, on any context, plus differentiators k9s
+lacks (command palette, AI, logs-deluxe, typed prod guard, session restore).
+See "Implemented since the audit" for what landed; a few large auxiliary
+views (pulses, xray, popeye, helm, RBAC) remain as tracked roadmap.
+
+## Implemented since the audit (parity-plus plan)
+
+Foundational refactors: navigation stack with Esc-back + breadcrumbs +
+header/flash chrome (P0-1); RowContext-aware renderers + styled cells (P0-2);
+flash/error bus surfacing watch/RBAC/port-forward failures (P0-3); keymap +
+command registry driving the help overlay (P0-4).
+
+Features:
+- **Metrics** — metrics.k8s.io poller; pod CPU/MEM/%req and node
+  CPU/%/MEM/%/PODS columns with `n/a` degradation; cluster header gauges;
+  unit-aware sort + semantic sort keys (P1).
+- **Drill-down** — Enter descends (workload→pods by selector, node→pods,
+  pod→containers, service→pods, cronjob→jobs, namespace→switch); Esc walks
+  back; selection pinned across refresh (P2).
+- **Table power** — regex/inverse/fuzzy/label filter modes with match counts;
+  row state coloring; multi-select marks + guard-aware bulk delete (P3).
+- **Verbs** — scale (+ReplicaSet), restart (+DaemonSet), cronjob
+  trigger/suspend, kill (grace 0), attach, secret decode, node
+  cordon/uncordon/drain with eviction loop (P5).
+- **Logs** — previous/timestamps toggles, since presets, tail, autoscroll,
+  clear, pretty JSON/logfmt with severity coloring; structured filtering (P6).
+- **Navigation/commands** — namespace favorites (1–9), first-class contexts
+  view, `:q`/`:ctx`/`:flash`, discovery-based resource resolution (P4 subset).
+
+Everything above ships with unit + fake-client tests; the suite is green
+under `-race`.
+
+## Original audit (pre-implementation)
+
+**Verdict at audit time: not yet.** The foundation (informer cache, palette,
+safety guard, logs, plugins, theming, AI hooks) was real and tested, but
+several core day-to-day k9s behaviors were missing or broken. The first pass
+closed the tractable gaps (see "Fixed in this pass"); the parity-plus plan
+then closed the rest.
 
 ## Method
 

@@ -31,12 +31,23 @@ func TestWatcherEmitsReload(t *testing.T) {
 		t.Fatalf("unexpected first update %#v", first)
 	}
 	time.Sleep(20 * time.Millisecond)
-	if err := os.WriteFile(path, []byte("name: two\naccent: blue\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Write atomically (temp + rename) as real editors do, so the poller never
+	// observes a truncated file mid-write.
+	atomicWrite(t, path, "name: two\naccent: blue\n")
 	second := waitUpdate(t, updates)
 	if second.Err != nil || second.Skin.Name != "two" {
 		t.Fatalf("unexpected second update %#v", second)
+	}
+}
+
+func atomicWrite(t *testing.T, path, content string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
 	}
 }
 

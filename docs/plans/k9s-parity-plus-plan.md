@@ -1,6 +1,14 @@
 # astrotui — k9s Parity-Plus Implementation Plan
 
-Status: **PLAN — approved for implementation**
+Status: **IN PROGRESS** — Phase 0 (refactors), Phase 1 (metrics), Phase 2
+(drill-down/selection), Phase 3 (filter/coloring/multi-select), Phase 5
+(scale/restart/cronjob/kill/attach/secret/cordon/drain), Phase 6 (logs), and a
+Phase 4 subset (namespace favorites, contexts view, discovery commands)
+implemented and tested under `-race`. Remaining: Phase 4 remainder
+(autocomplete, views.yaml, hotkeys.yaml, screendump, config flags), Phase 7
+(pulses/xray/popeye/helm/rbac), Phase 8 (palette/AI v2), Phase 9
+(perf/docs/release). See [`docs/reviews/k9s-capability-review.md`](../reviews/k9s-capability-review.md)
+for the running status and [`docs/k9s-migration.md`](../k9s-migration.md) for the key map.
 Date: 2026-07-06
 Baseline commit: `180848c` (branch `claude/capability-review-k9s-gt2k39`)
 Companion doc: [`docs/reviews/k9s-capability-review.md`](../reviews/k9s-capability-review.md) (verified gap audit this plan is built from)

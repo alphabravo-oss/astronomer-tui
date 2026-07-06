@@ -98,6 +98,31 @@ Eight phases, 43 user stories. See the [spec](docs/specs/i-want-to-make-a-clone-
 - Log parsing/filtering helpers, AI provider interface/mock/Ollama HTTP path, plugin loader, theme defaults, and port-forward manager model.
 - GoReleaser, install script, container image, and CI scaffolding.
 
+## k9s parity
+
+astrotui targets full k9s daily-driver parity plus its own differentiators.
+Implemented so far (see [`docs/plans/k9s-parity-plus-plan.md`](docs/plans/k9s-parity-plus-plan.md)
+and [`docs/reviews/k9s-capability-review.md`](docs/reviews/k9s-capability-review.md)):
+
+- **Navigation** — view stack with `Enter` drill-down (workload→pods,
+  node→pods, pod→containers, service→pods, cronjob→jobs), `Esc` back,
+  breadcrumbs, header with context/version/cluster CPU-MEM gauges.
+- **Metrics** — pod and node CPU/MEM/% columns from metrics.k8s.io, graceful
+  `n/a` when metrics-server is absent, unit-aware sorting.
+- **Table** — regex/inverse/fuzzy/label filters, state-based row coloring,
+  multi-select (`Space`/`Ctrl-A`/`Ctrl-\`) with guard-aware bulk delete.
+- **Verbs** — describe/yaml/edit/delete/kill, scale (Deploy/STS/RS), restart
+  (Deploy/STS/DS), cronjob trigger/suspend, exec/attach, port-forward, secret
+  decode, node cordon/uncordon/drain.
+- **Logs** — merged multi-pod streams, previous/timestamps/since/tail toggles,
+  autoscroll, regex + structured (`key=val`, `key~=re`) filtering, pretty
+  JSON/logfmt, jump-to-events/owner, AI summary/chat.
+- **Beyond k9s** — command palette (`Ctrl-P`), optional AI assist (`Ctrl-E`),
+  typed prod-context safety guard, session restore, flash error surfacing.
+
+See [`docs/k9s-migration.md`](docs/k9s-migration.md) for the full key map and
+intentional divergences.
+
 ## License
 
 [Apache-2.0](LICENSE)
