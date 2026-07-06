@@ -1,13 +1,18 @@
 # astrotui — k9s Parity-Plus Implementation Plan
 
-Status: **IN PROGRESS** — Phase 0 (refactors), Phase 1 (metrics), Phase 2
-(drill-down/selection), Phase 3 (filter/coloring/multi-select), Phase 5
-(scale/restart/cronjob/kill/attach/secret/cordon/drain), Phase 6 (logs), and a
-Phase 4 subset (namespace favorites, contexts view, discovery commands)
-implemented and tested under `-race`. Remaining: Phase 4 remainder
-(autocomplete, views.yaml, hotkeys.yaml, screendump, config flags), Phase 7
-(pulses/xray/popeye/helm/rbac), Phase 8 (palette/AI v2), Phase 9
-(perf/docs/release). See [`docs/reviews/k9s-capability-review.md`](../reviews/k9s-capability-review.md)
+Status: **IN PROGRESS (broad parity reached)** — Implemented and tested under
+`-race`: Phase 0 (all refactors), Phase 1 (metrics), Phase 2 (drill-down,
+selection, header/crumbs), Phase 3 (filter modes, coloring, multi-select/bulk,
+wide mode), Phase 4 (namespace favorites, contexts view, discovery commands,
+autocomplete + history, screendump, aliases view, native `aliases.yaml`,
+config keys + `--readonly`/`--command`), Phase 5 (scale/restart coverage,
+cronjob trigger/suspend, kill, attach, secret decode, cordon/drain, rollout
+undo/history), Phase 6 (logs: options, behaviors, pretty JSON), Phase 7
+(pulses, xray, RBAC/can-i), Phase 8 (palette v2 jump-to-any + recent, guard
+polish), Phase 9 (RowContext benchmark ~13ms/1k pods, docs). Remaining:
+Popeye/Helm views, native `hotkeys.yaml` binding, `views.yaml` custom columns,
+port-forward status column, AI chat view (`:ai`), release hardening. See
+[`docs/reviews/k9s-capability-review.md`](../reviews/k9s-capability-review.md)
 for the running status and [`docs/k9s-migration.md`](../k9s-migration.md) for the key map.
 Date: 2026-07-06
 Baseline commit: `180848c` (branch `claude/capability-review-k9s-gt2k39`)

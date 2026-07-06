@@ -57,12 +57,19 @@ the intentional divergences.
 
 | k9s | astrotui |
 | --- | --- |
-| `:<resource>` | `:<resource>` (aliases, shortnames, CRDs via discovery) |
+| `:<resource>` | `:<resource>` (aliases, shortnames, CRDs via discovery, autocomplete + history) |
 | `:ns <name>` | `:ns <name>`, `:ns all`, `:all` |
 | `:ctx` | `:ctx` (contexts view), `:ctx <name>` (switch) |
+| `:xray <kind>` | `:xray deploy\|sts\|ds` (dependency tree) |
+| `:pulses` | `:pulses` (health tiles) |
+| `:rbac` | `:rbac u:\|g:\|s:ns/sa`; `:can <verb> <res>` |
+| `:alias` | `:alias` (aliases + commands) |
 | `:q` | `:q`, `:quit` |
 | port-forwards | `:pf` |
 | — | `:flash` (recent status messages) |
+
+Custom aliases: drop an `aliases.yaml` in `~/.config/astrotui/` (or reuse your
+k9s one) mapping `alias: group/version/resource`.
 
 ## Filter syntax (`/`)
 
@@ -83,7 +90,8 @@ the intentional divergences.
 
 ## Not yet implemented (roadmap)
 
-Pulses, XRay dependency tree, Popeye scan, Helm releases, RBAC/can-i views,
-`hotkeys.yaml`/`aliases.yaml` native runtime binding, `views.yaml` custom
-columns, wide-mode toggle, command autocomplete/history. Benchmarking (`hey`)
-is intentionally out of scope — use a `plugins.yaml` entry instead.
+Popeye scan, Helm releases, native `hotkeys.yaml` key binding, `views.yaml`
+custom columns, port-forward manager status column, AI chat view (`:ai`).
+Benchmarking (`hey`) is intentionally out of scope — use a `plugins.yaml`
+entry instead. (Pulses, XRay, RBAC/can-i, `aliases.yaml`, wide-mode toggle,
+screendump, and command autocomplete/history are implemented.)
