@@ -87,6 +87,15 @@ type App struct {
 	labelSelector    labels.Selector
 	drillNodeName    string
 	tableStack       []tableState
+	marks            map[string]struct{}
+	lastMarkRow      int
+}
+
+// markCount returns the number of marked rows.
+func (a *App) markCount() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.marks)
 }
 
 // tableState captures the root-table view so drill-down can restore it on back.
@@ -452,9 +461,15 @@ func (a *App) updateTitle() {
 	title := fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, displayNamespace(a.options.Client.Namespace), resource)
 	a.mu.RLock()
 	filter := a.filter
+	matched := len(a.visibleObjects)
+	total := len(a.objects)
 	a.mu.RUnlock()
 	if filter != "" {
-		title += fmt.Sprintf(" filter=%q ", filter)
+		desc := ParseRowFilter(filter).Describe()
+		title += fmt.Sprintf(" filter=%s (%d/%d) ", desc, matched, total)
+	}
+	if marks := a.markCount(); marks > 0 {
+		title += fmt.Sprintf(" [%d marked] ", marks)
 	}
 	a.table.SetTitle(title)
 }
@@ -646,8 +661,14 @@ func (a *App) showFilter() {
 		SetFieldWidth(40)
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
+			expr := input.GetText()
+			if rf := ParseRowFilter(expr); rf.Err() != nil {
+				a.Flash(FlashError, "filter: %s", rf.Err().Error())
+				a.closeModal()
+				return
+			}
 			a.mu.Lock()
-			a.filter = input.GetText()
+			a.filter = expr
 			a.mu.Unlock()
 			if a.renderer != nil {
 				a.renderCurrent()
@@ -655,6 +676,7 @@ func (a *App) showFilter() {
 		}
 		a.closeModal()
 	})
+	input.SetLabel("Filter (/re: !inv -f fuzzy -l label): ")
 	a.showModal(input)
 }
 
@@ -1383,10 +1405,10 @@ func BuildRowsCtx(renderer views.Renderer, objects []*unstructured.Unstructured,
 		obj *unstructured.Unstructured
 	}
 	pairs := make([]rowObject, 0, len(objects))
-	query := strings.ToLower(strings.TrimSpace(filter))
+	rf := ParseRowFilter(filter)
 	for _, obj := range objects {
 		row := views.RenderRow(renderer, obj, rc)
-		if query != "" && !rowMatches(row, query) {
+		if !rf.Empty() && !rf.Matches(row, obj.GetLabels()) {
 			continue
 		}
 		pairs = append(pairs, rowObject{row: row, obj: obj})
@@ -1420,15 +1442,6 @@ func BuildRowsCtx(renderer views.Renderer, objects []*unstructured.Unstructured,
 		visible[i] = pair.obj
 	}
 	return rows, visible
-}
-
-func rowMatches(row []views.Cell, query string) bool {
-	for _, cell := range row {
-		if strings.Contains(strings.ToLower(cell.Text), query) {
-			return true
-		}
-	}
-	return false
 }
 
 func sortColumnFromRune(r rune) (int, bool) {
