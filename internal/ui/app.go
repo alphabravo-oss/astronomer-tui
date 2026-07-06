@@ -91,6 +91,7 @@ type App struct {
 	lastMarkRow      int
 	running          bool
 	nsHistory        []string
+	wideMode         bool
 }
 
 // isRunning reports whether the tview event loop is active, so background
@@ -178,8 +179,10 @@ func (a *App) Run(ctx context.Context) error {
 		if a.tableKeymap.handle(event) {
 			return nil
 		}
-		if col, ok := sortColumnFromRune(event.Rune()); ok {
-			a.setSort(col)
+		if dpos, ok := sortColumnFromRune(event.Rune()); ok {
+			if cols := a.displayColumns(a.renderer); dpos < len(cols) {
+				a.setSort(cols[dpos])
+			}
 			return nil
 		}
 		return event
@@ -243,6 +246,7 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(runeBinding(' ', "mark", "Mark/unmark row for bulk actions", "table", true, wrap(a.toggleMark)))
 	k.Add(keyBinding(tcell.KeyCtrlA, "mark-all", "Mark all visible rows", "table", true, wrap(a.markAllVisible)))
 	k.Add(keyBinding(tcell.KeyCtrlBackslash, "clear-marks", "Clear all marks", "table", true, wrap(a.clearMarks)))
+	k.Add(keyBinding(tcell.KeyCtrlW, "wide", "Toggle wide columns", "table", true, wrap(a.toggleWide)))
 	k.Add(keyBinding(tcell.KeyCtrlP, "palette", "Command palette", "global", true, wrap(a.showPalette)))
 	k.Add(keyBinding(tcell.KeyCtrlE, "ai-explain", "AI explain selection", "global", true, wrap(a.showFailureAI)))
 	k.Add(runeBinding('?', "help", "Show this overlay", "global", true, wrap(a.showHelp)))
@@ -332,17 +336,41 @@ func (a *App) drawHeader(renderer views.Renderer) {
 	a.mu.RLock()
 	sortCol, sortDesc := a.sortCol, a.sortDesc
 	a.mu.RUnlock()
-	for col, header := range renderer.Header() {
-		name := header.Name
-		if col == sortCol {
+	header := renderer.Header()
+	for dpos, real := range a.displayColumns(renderer) {
+		name := header[real].Name
+		if real == sortCol {
 			if sortDesc {
 				name += " ▼"
 			} else {
 				name += " ▲"
 			}
 		}
-		a.table.SetCell(0, col, tview.NewTableCell(name).SetTextColor(skinColor(a.skin.Accent, tcell.ColorAqua)).SetSelectable(false))
+		a.table.SetCell(0, dpos, tview.NewTableCell(name).SetTextColor(skinColor(a.skin.Accent, tcell.ColorAqua)).SetSelectable(false))
 	}
+}
+
+// displayColumns returns the real column indices to show, honoring wide mode.
+func (a *App) displayColumns(renderer views.Renderer) []int {
+	a.mu.RLock()
+	wide := a.wideMode
+	a.mu.RUnlock()
+	header := renderer.Header()
+	idx := make([]int, 0, len(header))
+	for i, c := range header {
+		if wide || !c.Wide {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// toggleWide flips wide-column mode and repaints.
+func (a *App) toggleWide() {
+	a.mu.Lock()
+	a.wideMode = !a.wideMode
+	a.mu.Unlock()
+	a.renderCurrent()
 }
 
 func (a *App) applySkin() {
@@ -431,6 +459,7 @@ func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell, visible []
 	a.table.Clear()
 	a.drawHeader(renderer)
 	gvr := renderer.GVR()
+	cols := a.displayColumns(renderer)
 	for row, cells := range rows {
 		rowColor := ""
 		marked := false
@@ -438,16 +467,29 @@ func (a *App) paintRows(renderer views.Renderer, rows [][]views.Cell, visible []
 			rowColor = views.StateColor(gvr, visible[row])
 			marked = a.isMarked(objectKey(visible[row]))
 		}
-		for col, cell := range cells {
-			if col == 0 && marked {
+		for dpos, real := range cols {
+			if real >= len(cells) {
+				continue
+			}
+			cell := cells[real]
+			if dpos == 0 && marked {
 				cell.Text = markGlyph + " " + cell.Text
 				cell.Color = "accent"
 			} else if cell.Color == "" {
 				cell.Color = rowColor
 			}
-			a.setTableCell(row+1, col, cell)
+			a.setTableCell(row+1, dpos, cell)
 		}
 	}
+}
+
+const maxCellWidth = 72
+
+func truncateCell(text string) string {
+	if len(text) <= maxCellWidth {
+		return text
+	}
+	return text[:maxCellWidth-1] + "…"
 }
 
 func objectKey(obj *unstructured.Unstructured) string {
@@ -1201,7 +1243,7 @@ func (a *App) renderCurrent() {
 // setTableCell writes a rendered cell, mapping its semantic color through the
 // active skin and applying alignment.
 func (a *App) setTableCell(row, col int, cell views.Cell) {
-	tc := tview.NewTableCell(cell.Text)
+	tc := tview.NewTableCell(truncateCell(cell.Text))
 	if cell.Color != "" {
 		tc.SetTextColor(a.semanticColor(cell.Color))
 	}

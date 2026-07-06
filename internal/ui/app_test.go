@@ -1129,3 +1129,39 @@ func TestNamespaceFavoritesMRU(t *testing.T) {
 		t.Fatalf("expected prod after index switch, got %q", app.options.Client.Namespace)
 	}
 }
+
+func TestWideModeFiltersColumns(t *testing.T) {
+	app := New(Options{})
+	renderer := views.GenericRenderer{
+		Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+		Columns:  []string{"NAME", "STATUS", "LABELS", "AGE"},
+	}
+	// Default (narrow): LABELS (wide) hidden.
+	narrow := app.displayColumns(renderer)
+	if len(narrow) != 3 {
+		t.Fatalf("expected 3 narrow columns, got %d", len(narrow))
+	}
+	header := renderer.Header()
+	for _, real := range narrow {
+		if header[real].Name == "LABELS" {
+			t.Fatal("LABELS should be hidden in narrow mode")
+		}
+	}
+	// Wide: all columns shown.
+	app.toggleWide()
+	if len(app.displayColumns(renderer)) != 4 {
+		t.Fatalf("expected 4 wide columns, got %d", len(app.displayColumns(renderer)))
+	}
+}
+
+func TestTruncateCell(t *testing.T) {
+	short := "api-server"
+	if truncateCell(short) != short {
+		t.Fatal("short text should be unchanged")
+	}
+	long := strings.Repeat("x", 100)
+	got := truncateCell(long)
+	if len([]rune(got)) != maxCellWidth || !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected truncation to %d with ellipsis, got len %d", maxCellWidth, len([]rune(got)))
+	}
+}

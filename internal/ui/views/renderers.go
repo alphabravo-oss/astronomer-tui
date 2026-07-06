@@ -57,9 +57,21 @@ func (g GenericRenderer) Header() []Column {
 	}
 	out := make([]Column, len(cols))
 	for i, col := range cols {
-		out[i] = Column{Name: col}
+		out[i] = Column{Name: col, Wide: wideColumn(col)}
 	}
 	return out
+}
+
+// wideColumn reports whether a column is verbose enough to hide unless wide
+// mode is enabled (k9s-style).
+func wideColumn(name string) bool {
+	switch strings.ToUpper(name) {
+	case "LABELS", "IMAGES", "SELECTOR", "OS-IMAGE", "KERNEL", "SERVICE-ACCOUNT",
+		"NOMINATED NODE", "READINESS GATES", "CONTAINERS", "ANNOTATIONS":
+		return true
+	default:
+		return false
+	}
 }
 
 func (g GenericRenderer) Row(u *unstructured.Unstructured) []Cell {
