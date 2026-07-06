@@ -784,61 +784,70 @@ func (a *App) showCommand(ctx context.Context) {
 	})
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
-			a.pushHistory(input.GetText())
-			command, ok := parseCommand(input.GetText())
-			if !ok {
-				a.showMessage("Unknown command", ":"+input.GetText())
-				return
-			}
-			switch command.Kind {
-			case "resource":
-				gvr, ok := resourceCommand(command.Value)
-				if !ok {
-					gvr, ok = a.resolveDiscoveryResource(command.Value)
-				}
-				if !ok {
-					a.showMessage("Unknown command", ":"+input.GetText())
-					return
-				}
-				a.switchResource(ctx, gvr)
-			case "namespace":
-				a.switchNamespace(command.Value)
-			case "context":
-				if !a.switchContext(ctx, command.Value) {
-					return
-				}
-			case "palette":
-				a.showPalette()
-				return
-			case "contexts-view":
-				a.showContextsView(ctx)
-				return
-			case "quit":
-				a.app.Stop()
-				return
-			case "port-forward-manager":
-				a.showPortForwardManager()
-				return
-			case "flash":
-				a.showFlashLog()
-				return
-			case "aliases-view":
-				a.showAliasesView()
-				return
-			case "pulses":
-				a.showPulsesView(ctx)
-				return
-			case "rbac":
-				a.showRBACView(ctx, command.Value)
-				return
-			case "can":
-				a.runCanI(ctx, command.Value)
-				return
+			text := input.GetText()
+			a.pushHistory(text)
+			if a.runCommandString(ctx, text) {
+				return // a view/modal was opened; don't dismiss it
 			}
 		}
 		a.closeModal()
 	})
 	a.showModal(input)
+}
+
+// runCommandString parses and dispatches a command. It returns true when the
+// command opened its own view/modal (so the caller should not close the current
+// modal), false when the command completed and the prompt should dismiss.
+func (a *App) runCommandString(ctx context.Context, text string) bool {
+	command, ok := parseCommand(text)
+	if !ok {
+		a.showMessage("Unknown command", ":"+text)
+		return true
+	}
+	switch command.Kind {
+	case "resource":
+		gvr, ok := resourceCommand(command.Value)
+		if !ok {
+			gvr, ok = a.resolveDiscoveryResource(command.Value)
+		}
+		if !ok {
+			a.showMessage("Unknown command", ":"+text)
+			return true
+		}
+		a.switchResource(ctx, gvr)
+	case "namespace":
+		a.switchNamespace(command.Value)
+	case "context":
+		a.switchContext(ctx, command.Value)
+		return true
+	case "palette":
+		a.showPalette()
+		return true
+	case "contexts-view":
+		a.showContextsView(ctx)
+		return true
+	case "quit":
+		a.app.Stop()
+		return true
+	case "port-forward-manager":
+		a.showPortForwardManager()
+		return true
+	case "flash":
+		a.showFlashLog()
+		return true
+	case "aliases-view":
+		a.showAliasesView()
+		return true
+	case "pulses":
+		a.showPulsesView(ctx)
+		return true
+	case "rbac":
+		a.showRBACView(ctx, command.Value)
+		return true
+	case "can":
+		a.runCanI(ctx, command.Value)
+	}
+	return false
 }
 
 func (a *App) switchNamespace(namespace string) {

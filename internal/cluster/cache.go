@@ -112,6 +112,19 @@ func (r *ResourceCache) HasInformer(gvr schema.GroupVersionResource) bool {
 	return ok && informer.HasSynced()
 }
 
+// SyncedGVRs returns the GVRs whose informers have completed initial sync.
+func (r *ResourceCache) SyncedGVRs() []schema.GroupVersionResource {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []schema.GroupVersionResource
+	for gvr, informer := range r.informers {
+		if informer.HasSynced() {
+			out = append(out, gvr)
+		}
+	}
+	return out
+}
+
 func (r *ResourceCache) List(gvr schema.GroupVersionResource, namespace string, selector labels.Selector) ([]*unstructured.Unstructured, error) {
 	informer := r.Ensure(gvr)
 	indexer := informer.GetIndexer()

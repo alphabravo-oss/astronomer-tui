@@ -9,6 +9,7 @@ import (
 type Category string
 
 const (
+	Recent     Category = "Recent"
 	Resources  Category = "Resources"
 	Actions    Category = "Actions"
 	Contexts   Category = "Contexts"

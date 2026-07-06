@@ -12,6 +12,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sort"
 	"strings"
 	"time"
@@ -67,7 +69,7 @@ func (a *App) showPalette() {
 func populatePaletteList(list *tview.List, matches []palette.Match, execute func(palette.Entry) bool) map[int]palette.Entry {
 	list.Clear()
 	entriesByRow := map[int]palette.Entry{}
-	for _, category := range []palette.Category{palette.Resources, palette.Actions, palette.Contexts, palette.Namespaces, palette.Plugins, palette.AI} {
+	for _, category := range []palette.Category{palette.Recent, palette.Resources, palette.Actions, palette.Contexts, palette.Namespaces, palette.Plugins, palette.AI} {
 		var grouped []palette.Entry
 		for _, match := range matches {
 			if match.Entry.Category == category {
@@ -95,6 +97,8 @@ func populatePaletteList(list *tview.List, matches []palette.Match, execute func
 
 func (a *App) executePaletteEntry(entry palette.Entry) bool {
 	switch entry.Category {
+	case palette.Recent:
+		return a.runCommandString(context.Background(), strings.TrimPrefix(entry.ID, "recent:"))
 	case palette.Resources:
 		if strings.HasPrefix(entry.ID, "resource:") {
 			gvr, ok := resourceCommand(strings.TrimPrefix(entry.ID, "resource:"))
@@ -102,6 +106,14 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 				return false
 			}
 			return a.switchResource(context.Background(), gvr)
+		}
+		if target, ok := entry.Payload.(jumpTarget); ok {
+			a.switchResource(context.Background(), target.gvr)
+			a.mu.Lock()
+			a.filter = target.obj.GetName()
+			a.mu.Unlock()
+			a.renderCurrent()
+			return true
 		}
 		if obj, ok := entry.Payload.(*unstructured.Unstructured); ok {
 			a.showDetailFor(obj)
@@ -270,7 +282,9 @@ func (a *App) paletteEntries() []palette.Entry {
 	objects := append([]*unstructured.Unstructured(nil), a.objects...)
 	currentGVR := a.currentGVR
 	a.mu.RUnlock()
-	entries := palette.ResourceEntries(fallbackKind(currentGVR.Resource), objects)
+	entries := a.recentCommandEntries()
+	entries = append(entries, palette.ResourceEntries(fallbackKind(currentGVR.Resource), objects)...)
+	entries = append(entries, a.crossInformerEntries(currentGVR)...)
 	for _, alias := range ResourceAliasEntries() {
 		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: alias, Category: palette.Resources})
 	}
@@ -287,6 +301,73 @@ func (a *App) paletteEntries() []palette.Entry {
 	entries = append(entries, palette.ContextEntries(contexts)...)
 	entries = append(entries, palette.NamespaceEntries(a.namespaceNames())...)
 	entries = append(entries, palette.PluginEntries(a.pluginFile)...)
+	return entries
+}
+
+// recentCommandEntries surfaces recently-run commands, newest first.
+func (a *App) recentCommandEntries() []palette.Entry {
+	a.mu.RLock()
+	hist := append([]string(nil), a.cmdHistory...)
+	a.mu.RUnlock()
+	var entries []palette.Entry
+	seen := map[string]struct{}{}
+	for i := len(hist) - 1; i >= 0; i-- {
+		cmd := hist[i]
+		if _, ok := seen[cmd]; ok {
+			continue
+		}
+		seen[cmd] = struct{}{}
+		entries = append(entries, palette.Entry{ID: "recent:" + cmd, Title: cmd, Description: "recent command", Category: palette.Recent})
+		if len(entries) >= 10 {
+			break
+		}
+	}
+	return entries
+}
+
+// jumpTarget carries a cross-resource palette jump.
+type jumpTarget struct {
+	gvr schema.GroupVersionResource
+	obj *unstructured.Unstructured
+}
+
+// crossInformerEntries indexes live object names from every synced informer
+// other than the current view, so the palette can jump to any cached object.
+func (a *App) crossInformerEntries(current schema.GroupVersionResource) []palette.Entry {
+	a.mu.RLock()
+	cache := a.cache
+	a.mu.RUnlock()
+	if cache == nil {
+		return nil
+	}
+	const cap = 2000
+	var entries []palette.Entry
+	for _, gvr := range cache.SyncedGVRs() {
+		if gvr == current {
+			continue
+		}
+		items, err := cache.List(gvr, "", labels.Everything())
+		if err != nil {
+			continue
+		}
+		kind := fallbackKind(gvr.Resource)
+		for _, obj := range items {
+			title := fmt.Sprintf("%s %s/%s", gvr.Resource, obj.GetNamespace(), obj.GetName())
+			if obj.GetNamespace() == "" {
+				title = fmt.Sprintf("%s %s", gvr.Resource, obj.GetName())
+			}
+			entries = append(entries, palette.Entry{
+				ID:          "jump:" + title,
+				Title:       title,
+				Description: "jump to " + kind,
+				Category:    palette.Resources,
+				Payload:     jumpTarget{gvr: gvr, obj: obj},
+			})
+			if len(entries) >= cap {
+				return entries
+			}
+		}
+	}
 	return entries
 }
 
