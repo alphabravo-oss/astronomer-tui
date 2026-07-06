@@ -30,6 +30,10 @@ func commandCatalog() []commandSpec {
 		{usage: ":ctx [name]", help: "Switch context, or open the context palette"},
 		{usage: ":all", help: "Show all namespaces"},
 		{usage: ":pf", help: "Port-forward manager"},
+		{usage: ":pulses", help: "Cluster health tiles"},
+		{usage: ":rbac u:|g:|s:", help: "Aggregate a subject's RBAC rules"},
+		{usage: ":can <verb> <res>", help: "Check access (SelfSubjectAccessReview)"},
+		{usage: ":alias", help: "List aliases and commands"},
 		{usage: ":flash", help: "Recent status messages"},
 		{usage: ":q", help: "Quit astrotui"},
 	}
