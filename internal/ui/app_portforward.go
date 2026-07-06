@@ -104,14 +104,18 @@ func (a *App) startPortForwardSpec(spec actions.PortForwardSpec) {
 
 func (a *App) runPortForward(ctx context.Context, client *cluster.Client, spec actions.PortForwardSpec) {
 	if a.options.PortForwardRun != nil {
-		_ = a.options.PortForwardRun(ctx, spec)
+		if err := a.options.PortForwardRun(ctx, spec); err != nil && ctx.Err() == nil {
+			a.Flash(FlashError, "port-forward %s %d:%d failed: %s", spec.Resource, spec.Local, spec.Remote, err.Error())
+		}
 		return
 	}
 	if client == nil || client.Config == nil || client.Clientset == nil {
 		<-ctx.Done()
 		return
 	}
-	_ = actions.RunPortForward(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard)
+	if err := actions.RunPortForward(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard); err != nil && ctx.Err() == nil {
+		a.Flash(FlashError, "port-forward %s %d:%d failed: %s", spec.Resource, spec.Local, spec.Remote, err.Error())
+	}
 }
 
 func (a *App) showPortForwardManager() {

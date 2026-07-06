@@ -35,6 +35,7 @@ type ResourceCache struct {
 	informers map[schema.GroupVersionResource]cache.SharedIndexInformer
 	running   map[schema.GroupVersionResource]struct{}
 	subs      map[schema.GroupVersionResource][]chan Event
+	errSubs   map[schema.GroupVersionResource][]chan error
 	stop      <-chan struct{}
 	mu        sync.RWMutex
 }
@@ -45,6 +46,7 @@ func NewResourceCache(client dynamic.Interface, resync time.Duration) *ResourceC
 		informers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
 		running:   make(map[schema.GroupVersionResource]struct{}),
 		subs:      make(map[schema.GroupVersionResource][]chan Event),
+		errSubs:   make(map[schema.GroupVersionResource][]chan error),
 	}
 }
 
@@ -64,6 +66,11 @@ func (r *ResourceCache) Ensure(gvr schema.GroupVersionResource) cache.SharedInde
 		return informer
 	}
 	informer := r.factory.ForResource(gvr).Informer()
+	// Surface watch/list failures (RBAC denials, API removed) instead of an
+	// endlessly-empty table.
+	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
+		r.publishErr(gvr, err)
+	})
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			r.publish(gvr, Event{Type: EventAdded, Object: asUnstructured(obj)})
@@ -148,6 +155,31 @@ func (r *ResourceCache) publish(gvr schema.GroupVersionResource, event Event) {
 	for _, ch := range subs {
 		select {
 		case ch <- event:
+		default:
+		}
+	}
+}
+
+// SubscribeErrors returns a channel that receives watch/list errors for the
+// GVR. The channel is buffered and lossy (latest errors win).
+func (r *ResourceCache) SubscribeErrors(gvr schema.GroupVersionResource) <-chan error {
+	ch := make(chan error, 8)
+	r.mu.Lock()
+	r.errSubs[gvr] = append(r.errSubs[gvr], ch)
+	r.mu.Unlock()
+	return ch
+}
+
+func (r *ResourceCache) publishErr(gvr schema.GroupVersionResource, err error) {
+	if err == nil {
+		return
+	}
+	r.mu.RLock()
+	subs := append([]chan error(nil), r.errSubs[gvr]...)
+	r.mu.RUnlock()
+	for _, ch := range subs {
+		select {
+		case ch <- err:
 		default:
 		}
 	}

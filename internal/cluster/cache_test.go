@@ -77,3 +77,26 @@ func TestResourceCacheStartsInformerCreatedAfterStart(t *testing.T) {
 		t.Fatalf("unexpected list %#v", items)
 	}
 }
+
+func TestSubscribeErrorsReceivesPublishedErrors(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	cache := NewResourceCache(client, time.Hour)
+	ch := cache.SubscribeErrors(gvr)
+	cache.publishErr(gvr, context.DeadlineExceeded)
+	select {
+	case err := <-ch:
+		if err == nil {
+			t.Fatal("expected non-nil error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected error to be delivered to subscriber")
+	}
+	// nil errors are dropped.
+	cache.publishErr(gvr, nil)
+	select {
+	case <-ch:
+		t.Fatal("nil error should not be published")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

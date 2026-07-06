@@ -325,6 +325,7 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 	namespace := a.namespaceFor(client, gvr)
 	items, err := cache.List(gvr, namespace, labels.Everything())
 	if err != nil {
+		a.Flash(FlashError, "%s: list failed: %s", gvr.Resource, err.Error())
 		return
 	}
 	a.mu.RLock()
@@ -396,6 +397,7 @@ func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResourc
 	cache.Ensure(gvr)
 	a.drawHeader(renderer)
 	events := cache.Subscribe(gvr)
+	errs := cache.SubscribeErrors(gvr)
 	go func() {
 		cache.WaitForSync(watchCtx, gvr)
 		a.refresh(cache, client, gvr, renderer)
@@ -405,10 +407,27 @@ func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResourc
 				return
 			case <-events:
 				a.refresh(cache, client, gvr, renderer)
+			case err := <-errs:
+				if err != nil {
+					a.Flash(FlashError, "%s: %s", gvr.Resource, watchErrorHint(err))
+				}
 			}
 		}
 	}()
 	return true
+}
+
+// watchErrorHint condenses a watch/list error into a short, actionable message.
+func watchErrorHint(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "forbidden") || strings.Contains(msg, "Forbidden"):
+		return "watch forbidden (check RBAC)"
+	case strings.Contains(msg, "the server could not find") || strings.Contains(msg, "could not find the requested resource"):
+		return "resource not served by the API"
+	default:
+		return "watch failed: " + msg
+	}
 }
 
 func rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
@@ -541,6 +560,9 @@ func (a *App) showCommand(ctx context.Context) {
 				return
 			case "port-forward-manager":
 				a.showPortForwardManager()
+				return
+			case "flash":
+				a.showFlashLog()
 				return
 			}
 		}

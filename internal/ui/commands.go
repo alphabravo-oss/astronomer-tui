@@ -48,6 +48,11 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "port-forward-manager"}, true
+	case "flash", "flashes":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "flash"}, true
 	default:
 		return Command{Kind: "resource", Value: parts[0]}, true
 	}
