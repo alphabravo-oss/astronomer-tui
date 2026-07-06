@@ -95,6 +95,16 @@ func (r *ResourceCache) WaitForSync(ctx context.Context, gvr schema.GroupVersion
 	return cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
 }
 
+// HasInformer reports whether an informer for the GVR already exists and has
+// completed its initial sync. Used to avoid starting informers just to read a
+// relationship column.
+func (r *ResourceCache) HasInformer(gvr schema.GroupVersionResource) bool {
+	r.mu.RLock()
+	informer, ok := r.informers[gvr]
+	r.mu.RUnlock()
+	return ok && informer.HasSynced()
+}
+
 func (r *ResourceCache) List(gvr schema.GroupVersionResource, namespace string, selector labels.Selector) ([]*unstructured.Unstructured, error) {
 	informer := r.Ensure(gvr)
 	indexer := informer.GetIndexer()

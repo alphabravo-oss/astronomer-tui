@@ -16,10 +16,18 @@ import (
 
 type Column struct {
 	Name string
+	// Wide marks a column that is hidden unless wide-mode is enabled.
+	Wide bool
 }
 
 type Cell struct {
 	Text string
+	// Color is a semantic style name ("ok", "warn", "error", "muted") that the
+	// app maps through the active skin. Empty means default foreground.
+	Color string
+	// Align is a tview alignment constant (0 = left). Kept small so the zero
+	// value is the common case.
+	Align int
 }
 
 type DetailContent struct {

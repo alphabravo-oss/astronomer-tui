@@ -72,6 +72,7 @@ type App struct {
 	skin             uitheme.Skin
 	clusterScopedDyn map[schema.GroupVersionResource]bool
 	crdRenderers     map[schema.GroupVersionResource]views.Renderer
+	metrics          metricsSnapshotter
 }
 
 func New(options Options) *App {
@@ -296,7 +297,7 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 	a.mu.RLock()
 	filter, sortCol, sortDesc := a.filter, a.sortCol, a.sortDesc
 	a.mu.RUnlock()
-	rows, visible := buildRows(renderer, items, filter, sortCol, sortDesc)
+	rows, visible := buildRows(renderer, items, filter, sortCol, sortDesc, a.rowContext(gvr, items))
 	a.mu.Lock()
 	a.objects = items
 	a.visibleObjects = visible
@@ -306,7 +307,7 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 		a.drawHeader(renderer)
 		for row, cells := range rows {
 			for col, cell := range cells {
-				a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
+				a.setTableCell(row+1, col, cell)
 			}
 		}
 		a.updateTitle()
@@ -622,6 +623,25 @@ func skinColor(value string, fallback tcell.Color) tcell.Color {
 	return color
 }
 
+// semanticColor maps a renderer's semantic color name to a concrete color
+// through the active skin, falling back to the default foreground.
+func (a *App) semanticColor(name string) tcell.Color {
+	switch name {
+	case "ok":
+		return skinColor(a.skin.OK, tcell.ColorGreen)
+	case "warn":
+		return skinColor(a.skin.Warn, tcell.ColorYellow)
+	case "error":
+		return skinColor(a.skin.Error, tcell.ColorRed)
+	case "muted":
+		return skinColor(a.skin.Muted, tcell.ColorGray)
+	case "accent":
+		return skinColor(a.skin.Accent, tcell.ColorAqua)
+	default:
+		return skinColor(a.skin.FG, tcell.ColorWhite)
+	}
+}
+
 func (a *App) showDelete() {
 	obj := a.selectedObject()
 	if obj == nil || a.renderer == nil {
@@ -844,8 +864,9 @@ func (a *App) renderCurrent() {
 	a.mu.RLock()
 	objects := append([]*unstructured.Unstructured(nil), a.objects...)
 	filter, sortCol, sortDesc := a.filter, a.sortCol, a.sortDesc
+	gvr := a.currentGVR
 	a.mu.RUnlock()
-	rows, visible := buildRows(a.renderer, objects, filter, sortCol, sortDesc)
+	rows, visible := buildRows(a.renderer, objects, filter, sortCol, sortDesc, a.rowContext(gvr, objects))
 	a.mu.Lock()
 	a.visibleObjects = visible
 	a.mu.Unlock()
@@ -853,10 +874,77 @@ func (a *App) renderCurrent() {
 	a.drawHeader(a.renderer)
 	for row, cells := range rows {
 		for col, cell := range cells {
-			a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
+			a.setTableCell(row+1, col, cell)
 		}
 	}
 	a.updateTitle()
+}
+
+// setTableCell writes a rendered cell, mapping its semantic color through the
+// active skin and applying alignment.
+func (a *App) setTableCell(row, col int, cell views.Cell) {
+	tc := tview.NewTableCell(cell.Text)
+	if cell.Color != "" {
+		tc.SetTextColor(a.semanticColor(cell.Color))
+	}
+	if cell.Align != 0 {
+		tc.SetAlign(cell.Align)
+	}
+	a.table.SetCell(row, col, tc)
+}
+
+// rowContext assembles the cross-object context for the current render. Metrics
+// are wired in P1-2; today it returns relationship counts only.
+func (a *App) rowContext(gvr schema.GroupVersionResource, objects []*unstructured.Unstructured) views.RowContext {
+	rc := views.RowContext{}
+	a.mu.RLock()
+	poller := a.metrics
+	a.mu.RUnlock()
+	if poller != nil {
+		pods, nodes, alloc, ok := poller.Snapshot()
+		rc.PodMetrics = pods
+		rc.NodeMetrics = nodes
+		rc.MetricsOK = ok
+		rc.Alloc = alloc
+	}
+	if gvr.Resource == "nodes" {
+		rc.PodsByNode = a.podsByNode()
+	}
+	return rc
+}
+
+// metricsSnapshotter is satisfied by the metrics poller (wired in P1). Kept as
+// an interface so the UI has no hard dependency on the poller implementation
+// and tests can inject fakes.
+type metricsSnapshotter interface {
+	Snapshot() (map[string]views.PodMetrics, map[string]views.NodeMetrics, views.NodeAllocatable, bool)
+}
+
+// podsByNode counts running pods per node from the pods informer if it is
+// already synced. Returns nil when pods aren't cached (renderer shows n/a).
+func (a *App) podsByNode() map[string]int {
+	a.mu.RLock()
+	cache := a.cache
+	a.mu.RUnlock()
+	if cache == nil {
+		return nil
+	}
+	podGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	if !cache.HasInformer(podGVR) {
+		return nil
+	}
+	pods, err := cache.List(podGVR, "", labels.Everything())
+	if err != nil {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, pod := range pods {
+		node, _, _ := unstructured.NestedString(pod.Object, "spec", "nodeName")
+		if node != "" {
+			counts[node]++
+		}
+	}
+	return counts
 }
 
 func (a *App) showDetail() {
@@ -1027,11 +1115,19 @@ func fallbackKind(resource string) string {
 	return strings.ToUpper(resource[:1]) + resource[1:]
 }
 
-func buildRows(renderer views.Renderer, objects []*unstructured.Unstructured, filter string, sortCol int, sortDesc bool) ([][]views.Cell, []*unstructured.Unstructured) {
-	return BuildRows(renderer, objects, filter, sortCol, sortDesc)
+func buildRows(renderer views.Renderer, objects []*unstructured.Unstructured, filter string, sortCol int, sortDesc bool, rc views.RowContext) ([][]views.Cell, []*unstructured.Unstructured) {
+	return BuildRowsCtx(renderer, objects, filter, sortCol, sortDesc, rc)
 }
 
+// BuildRows renders, filters (substring), and sorts rows without cross-object
+// context. Retained for callers that have no metrics/relationship data.
 func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, filter string, sortCol int, sortDesc bool) ([][]views.Cell, []*unstructured.Unstructured) {
+	return BuildRowsCtx(renderer, objects, filter, sortCol, sortDesc, views.RowContext{})
+}
+
+// BuildRowsCtx is BuildRows with cross-object RowContext (metrics, relationship
+// counts) available to context-aware renderers.
+func BuildRowsCtx(renderer views.Renderer, objects []*unstructured.Unstructured, filter string, sortCol int, sortDesc bool, rc views.RowContext) ([][]views.Cell, []*unstructured.Unstructured) {
 	type rowObject struct {
 		row []views.Cell
 		obj *unstructured.Unstructured
@@ -1039,7 +1135,7 @@ func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, fi
 	pairs := make([]rowObject, 0, len(objects))
 	query := strings.ToLower(strings.TrimSpace(filter))
 	for _, obj := range objects {
-		row := renderer.Row(obj)
+		row := views.RenderRow(renderer, obj, rc)
 		if query != "" && !rowMatches(row, query) {
 			continue
 		}

@@ -882,14 +882,14 @@ func TestBuildRowsFiltersAndSortsVisibleObjects(t *testing.T) {
 	worker := namedObject("worker", "default")
 	api := namedObject("api", "default")
 	db := namedObject("db", "storage")
-	rows, visible := buildRows(renderer, []*unstructured.Unstructured{worker, api, db}, "default", 0, false)
+	rows, visible := buildRows(renderer, []*unstructured.Unstructured{worker, api, db}, "default", 0, false, views.RowContext{})
 	if len(rows) != 2 || len(visible) != 2 {
 		t.Fatalf("rows=%#v visible=%#v", rows, visible)
 	}
 	if visible[0].GetName() != "api" || visible[1].GetName() != "worker" {
 		t.Fatalf("expected sorted visible objects, got %s/%s", visible[0].GetName(), visible[1].GetName())
 	}
-	rows, visible = buildRows(renderer, []*unstructured.Unstructured{worker, api, db}, "", 0, true)
+	rows, visible = buildRows(renderer, []*unstructured.Unstructured{worker, api, db}, "", 0, true, views.RowContext{})
 	if len(rows) != 3 || visible[0].GetName() != "worker" || visible[2].GetName() != "api" {
 		t.Fatalf("expected descending sort, rows=%#v visible=%#v", rows, visible)
 	}
