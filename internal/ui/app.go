@@ -90,6 +90,7 @@ type App struct {
 	marks            map[string]struct{}
 	lastMarkRow      int
 	running          bool
+	nsHistory        []string
 }
 
 // isRunning reports whether the tview event loop is active, so background
@@ -235,6 +236,10 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(runeBinding('/', "filter", "Filter visible rows", "table", true, wrap(a.showFilter)))
 	k.Add(runeBinding(':', "command", "Command prompt", "table", true, wrap(func() { a.showCommand(a.runCtx) })))
 	k.Add(runeBinding('0', "all-namespaces", "Show all namespaces", "table", true, wrap(func() { a.switchNamespace("all") })))
+	for i := 1; i <= 9; i++ {
+		idx := i - 1
+		k.Add(runeBinding(rune('0'+i), fmt.Sprintf("ns-favorite-%d", i), "Switch to namespace favorite", "table", false, wrap(func() { a.switchNamespaceByIndex(idx) })))
+	}
 	k.Add(runeBinding(' ', "mark", "Mark/unmark row for bulk actions", "table", true, wrap(a.toggleMark)))
 	k.Add(keyBinding(tcell.KeyCtrlA, "mark-all", "Mark all visible rows", "table", true, wrap(a.markAllVisible)))
 	k.Add(keyBinding(tcell.KeyCtrlBackslash, "clear-marks", "Clear all marks", "table", true, wrap(a.clearMarks)))
@@ -742,6 +747,9 @@ func (a *App) showCommand(ctx context.Context) {
 			case "palette":
 				a.showPalette()
 				return
+			case "contexts-view":
+				a.showContextsView(ctx)
+				return
 			case "quit":
 				a.app.Stop()
 				return
@@ -770,7 +778,59 @@ func (a *App) switchNamespace(namespace string) {
 		a.options.Client = &cluster.Client{}
 	}
 	a.options.Client.Namespace = namespace
+	a.recordNamespace(namespace)
 	a.renderCurrent()
+}
+
+// recordNamespace maintains a most-recently-used namespace list (favorites),
+// newest first, capped at 9 for the 1-9 hotkeys.
+func (a *App) recordNamespace(namespace string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, 0, len(a.nsHistory)+1)
+	out = append(out, namespace)
+	for _, n := range a.nsHistory {
+		if n != namespace {
+			out = append(out, n)
+		}
+	}
+	if len(out) > 9 {
+		out = out[:9]
+	}
+	a.nsHistory = out
+}
+
+// nsFavorites returns the ordered namespace hotkey targets: MRU first, then
+// discovered namespaces to fill the list.
+func (a *App) nsFavorites() []string {
+	a.mu.RLock()
+	favs := append([]string(nil), a.nsHistory...)
+	a.mu.RUnlock()
+	seen := map[string]struct{}{}
+	for _, n := range favs {
+		seen[n] = struct{}{}
+	}
+	for _, n := range a.namespaceNames() {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		favs = append(favs, n)
+		seen[n] = struct{}{}
+		if len(favs) >= 9 {
+			break
+		}
+	}
+	return favs
+}
+
+// switchNamespaceByIndex switches to the Nth namespace favorite (0-based).
+func (a *App) switchNamespaceByIndex(i int) {
+	favs := a.nsFavorites()
+	if i < 0 || i >= len(favs) {
+		a.Flash(FlashInfo, "no namespace favorite %d", i+1)
+		return
+	}
+	a.switchNamespace(favs[i])
 }
 
 // resolveDiscoveryResource maps a typed resource name (plural, singular, short

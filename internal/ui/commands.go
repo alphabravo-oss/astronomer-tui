@@ -55,7 +55,7 @@ func parseCommand(input string) (Command, bool) {
 			return Command{Kind: "context", Value: parts[1]}, true
 		}
 		if len(parts) == 1 {
-			return Command{Kind: "palette"}, true
+			return Command{Kind: "contexts-view"}, true
 		}
 		return Command{}, false
 	case "all":

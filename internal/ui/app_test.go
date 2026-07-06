@@ -175,7 +175,7 @@ func TestParseNavigationCommands(t *testing.T) {
 		t.Fatalf("unexpected context command %#v %v", cmd, ok)
 	}
 	cmd, ok = parseCommand(":ctx")
-	if !ok || cmd.Kind != "palette" {
+	if !ok || cmd.Kind != "contexts-view" {
 		t.Fatalf("unexpected bare ctx command %#v %v", cmd, ok)
 	}
 	cmd, ok = parseCommand(":all")
@@ -1112,4 +1112,20 @@ func unstructuredFrom(t *testing.T, obj any) *unstructured.Unstructured {
 		t.Fatal(err)
 	}
 	return &unstructured.Unstructured{Object: data}
+}
+
+func TestNamespaceFavoritesMRU(t *testing.T) {
+	app := New(Options{Client: &cluster.Client{Namespace: "default"}})
+	app.switchNamespace("kube-system")
+	app.switchNamespace("prod")
+	app.switchNamespace("kube-system") // moves to front, dedup
+	favs := app.nsHistory
+	if len(favs) < 2 || favs[0] != "kube-system" || favs[1] != "prod" {
+		t.Fatalf("unexpected MRU order %#v", favs)
+	}
+	// Switching by index 1 selects the second favorite (prod).
+	app.switchNamespaceByIndex(1)
+	if app.options.Client.Namespace != "prod" {
+		t.Fatalf("expected prod after index switch, got %q", app.options.Client.Namespace)
+	}
 }
