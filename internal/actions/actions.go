@@ -165,6 +165,18 @@ func DeleteResource(ctx context.Context, client dynamic.Interface, gvr schema.Gr
 	return resource.Delete(ctx, name, metav1.DeleteOptions{})
 }
 
+// KillResource deletes with a zero grace period (k9s "kill"), forcing the API
+// server to remove the object immediately.
+func KillResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
+	grace := int64(0)
+	opts := metav1.DeleteOptions{GracePeriodSeconds: &grace}
+	resource := client.Resource(gvr)
+	if namespace != "" {
+		return resource.Namespace(namespace).Delete(ctx, name, opts)
+	}
+	return resource.Delete(ctx, name, opts)
+}
+
 func YAMLForEdit(obj *unstructured.Unstructured) ([]byte, error) {
 	data, err := json.Marshal(obj.Object)
 	if err != nil {

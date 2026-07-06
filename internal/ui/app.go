@@ -220,7 +220,9 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(runeBinding('y', "yaml", "View resource YAML", "table", true, wrap(a.showDetail)))
 	k.Add(runeBinding('e', "edit", "Edit YAML in $EDITOR", "table", true, wrap(a.showEdit)))
 	k.Add(keyBinding(tcell.KeyCtrlD, "delete", "Delete selected resource", "table", true, wrap(a.showDelete)))
-	k.Add(runeBinding('s', "scale", "Scale replicas", "table", true, wrap(a.showScale)))
+	k.Add(keyBinding(tcell.KeyCtrlK, "kill", "Kill (delete, grace 0)", "table", true, wrap(a.showKill)))
+	k.Add(runeBinding('s', "scale", "Scale replicas / decode secret", "table", true, wrap(a.showScale)))
+	k.Add(runeBinding('a', "attach", "Attach to pod", "table", true, wrap(a.showAttach)))
 	k.Add(runeBinding('r', "restart", "Rollout restart", "table", true, wrap(a.showRestart)))
 	k.Add(runeBinding('t', "trigger", "Trigger job from cronjob", "table", true, wrap(a.showTrigger)))
 	k.Add(runeBinding('z', "suspend", "Toggle cronjob suspend", "table", true, wrap(a.showSuspendToggle)))
@@ -989,6 +991,10 @@ func (a *App) confirmDelete(req actions.Request, confirmText string) {
 func (a *App) showScale() {
 	obj := a.selectedObject()
 	if obj == nil || a.renderer == nil {
+		return
+	}
+	if obj.GetKind() == "Secret" {
+		a.showSecretDecode()
 		return
 	}
 	req := actionRequest("scale", a.renderer.GVR(), obj)
