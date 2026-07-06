@@ -115,14 +115,15 @@ func run(args []string) int {
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 	app := ui.New(ui.Options{
-		Client:       kube,
-		Config:       cfg,
-		SessionStore: stateStore,
-		InitialState: restored,
-		Skin:         skin,
-		SkinUpdates:  theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
-		AIProvider:   aiProvider,
-		Version:      version,
+		Client:        kube,
+		Config:        cfg,
+		SessionStore:  stateStore,
+		InitialState:  restored,
+		Skin:          skin,
+		SkinUpdates:   theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
+		AIProvider:    aiProvider,
+		Version:       version,
+		MetricsPoller: cluster.NewMetricsPoller(kube.Dynamic, 0),
 	})
 	if err := app.Run(appCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)

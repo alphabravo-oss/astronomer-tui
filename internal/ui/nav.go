@@ -6,6 +6,10 @@ import (
 	"strings"
 
 	"github.com/rivo/tview"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	uitheme "github.com/alphabravo-oss/astrotui/internal/ui/theme"
+	"github.com/alphabravo-oss/astrotui/internal/ui/views"
 )
 
 // navPage is a full-screen view on the navigation stack.
@@ -267,8 +271,68 @@ func (a *App) updateHeader() {
 	version := strings.TrimSpace(a.options.Version)
 	left := fmt.Sprintf(" [%s::b]astrotui[-:-:-] [%s]%s[-:-:-]/[%s]%s[-:-:-]", accent, accent, ctxName, accent, ns)
 	right := fmt.Sprintf("[%s]%s[-:-:-]", subtle, resource)
+	if gauges := a.clusterGauges(); gauges != "" {
+		right += "  " + gauges
+	}
 	if version != "" {
 		right += fmt.Sprintf(" [%s]%s[-:-:-]", subtle, version)
 	}
 	a.header.SetText(left + "  " + right)
+}
+
+// clusterGauges renders cluster CPU/MEM utilization bars from the metrics
+// snapshot, or "" when metrics are unavailable.
+func (a *App) clusterGauges() string {
+	a.mu.RLock()
+	poller := a.metrics
+	objects := append([]*unstructured.Unstructured(nil), a.objects...)
+	gvr := a.currentGVR
+	a.mu.RUnlock()
+	if poller == nil {
+		return ""
+	}
+	_, nodes, _, ok := poller.Snapshot()
+	if !ok || len(nodes) == 0 {
+		return ""
+	}
+	// Allocatable is only known when the nodes view is loaded; otherwise show
+	// absolute usage without a percentage.
+	var alloc views.NodeAllocatable
+	if gvr.Resource == "nodes" {
+		alloc = nodeAllocatable(objects)
+	}
+	var usedCPU, allocCPU, usedMem, allocMem int64
+	for name, nm := range nodes {
+		usedCPU += nm.CPUMilli
+		usedMem += nm.MemBytes
+		allocCPU += alloc.CPU[name]
+		allocMem += alloc.Mem[name]
+	}
+	cpu := gaugeText("CPU", usedCPU, allocCPU, a.skin)
+	mem := gaugeText("MEM", usedMem, allocMem, a.skin)
+	return cpu + " " + mem
+}
+
+// gaugeText renders "LABEL [====    ] 42%" when total is known, else the raw
+// used amount.
+func gaugeText(label string, used, total int64, skin uitheme.Skin) string {
+	subtle := tagColor(skin.Subtle, "gray")
+	if total <= 0 {
+		return fmt.Sprintf("[%s]%s -[-:-:-]", subtle, label)
+	}
+	pct := int(float64(used) / float64(total) * 100)
+	if pct > 100 {
+		pct = 100
+	}
+	const width = 8
+	filled := pct * width / 100
+	bar := strings.Repeat("│", filled) + strings.Repeat(" ", width-filled)
+	color := tagColor(skin.OK, "green")
+	switch {
+	case pct >= 90:
+		color = tagColor(skin.Error, "red")
+	case pct >= 75:
+		color = tagColor(skin.Warn, "yellow")
+	}
+	return fmt.Sprintf("[%s]%s[-:-:-][%s]%s[-:-:-][%s] %d%%[-:-:-]", subtle, label, color, bar, subtle, pct)
 }

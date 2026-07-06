@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // CompareCellValues orders two rendered cell values the way a human expects:
@@ -41,6 +43,61 @@ func CompareCellValues(a, b string) int {
 		}
 	}
 	return strings.Compare(a, b)
+}
+
+// CompareCellValuesFor is column-aware: CPU/MEM columns are compared as
+// Kubernetes quantities (so "142m" < "1" core and "512Mi" < "1.2Gi"), percent
+// columns numerically, and everything else falls back to CompareCellValues.
+// This disambiguates "142m" (millicores) from "10m" (age minutes), which live
+// in different columns.
+func CompareCellValuesFor(column, a, b string) int {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	up := strings.ToUpper(column)
+	if strings.HasPrefix(up, "%") {
+		return comparePercent(a, b)
+	}
+	if strings.Contains(up, "CPU") || strings.Contains(up, "MEM") {
+		if c, ok := compareQuantities(a, b); ok {
+			return c
+		}
+	}
+	return CompareCellValues(a, b)
+}
+
+func comparePercent(a, b string) int {
+	av, aok := parsePercent(a)
+	bv, bok := parsePercent(b)
+	if aok && bok {
+		return compareFloats(av, bv)
+	}
+	if aok != bok { // real percent sorts before n/a
+		if aok {
+			return -1
+		}
+		return 1
+	}
+	return CompareCellValues(a, b)
+}
+
+func parsePercent(s string) (float64, bool) {
+	s = strings.TrimSuffix(strings.TrimSpace(s), "%")
+	v, err := strconv.ParseFloat(s, 64)
+	return v, err == nil
+}
+
+func compareQuantities(a, b string) (int, bool) {
+	aq, aerr := resource.ParseQuantity(a)
+	bq, berr := resource.ParseQuantity(b)
+	if aerr == nil && berr == nil {
+		return aq.Cmp(bq), true
+	}
+	if aerr == nil { // valid quantity sorts before n/a/empty
+		return -1, true
+	}
+	if berr == nil {
+		return 1, true
+	}
+	return 0, false
 }
 
 func compareFloats(a, b float64) int {

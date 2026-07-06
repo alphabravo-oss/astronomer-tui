@@ -11,8 +11,8 @@
   headers: NAME | STATUS | LABELS | AGE
   row: sample | Ready | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=nodes
-  headers: NAME | STATUS | ROLE | ARCH | TAINTS | VERSION | OS-IMAGE | KERNEL | INTERNAL-IP | EXTERNAL-IP | LABELS | AGE
-  row: sample | Ready | worker | amd64 | 1 | v1.30.0 | Ubuntu 24.04 | 6.8.0 | 10.0.0.10 | 203.0.113.10 | app=api,node-role.kubernetes.io/worker= | 
+  headers: NAME | STATUS | ROLE | ARCH | TAINTS | VERSION | CPU | %CPU | MEM | %MEM | PODS | OS-IMAGE | KERNEL | INTERNAL-IP | EXTERNAL-IP | LABELS | AGE
+  row: sample | Ready | worker | amd64 | 1 | v1.30.0 | n/a | n/a | n/a | n/a | n/a | Ubuntu 24.04 | 6.8.0 | 10.0.0.10 | 203.0.113.10 | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=persistentvolumeclaims
   headers: NAMESPACE | NAME | STATUS | VOLUME | CAPACITY | ACCESS MODES | STORAGECLASS | LABELS | AGE
   row: default | sample | Ready | pv-a | 10Gi | ReadWriteOnce |  | app=api,node-role.kubernetes.io/worker= | 
@@ -20,8 +20,8 @@
   headers: NAME | CAPACITY | ACCESS MODES | RECLAIM POLICY | STATUS | CLAIM | STORAGECLASS | REASON | VOLUMEMODE | LABELS | AGE
   row: sample | 10Gi | ReadWriteOnce | Delete | Ready | default/data |  | Failed |  | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=pods
-  headers: NAMESPACE | NAME | READY | STATUS | RESTARTS | LAST RESTART | IP | NODE | SERVICE-ACCOUNT | NOMINATED NODE | READINESS GATES | QOS | LABELS | AGE
-  row: default | sample | 1/2 | CrashLoopBackOff | 3 | 58d | 10.1.2.3 | node-a | runner |  |  | Burstable | app=api,node-role.kubernetes.io/worker= | 
+  headers: NAMESPACE | NAME | READY | STATUS | RESTARTS | LAST RESTART | CPU | MEM | %CPU/R | %MEM/R | IP | NODE | SERVICE-ACCOUNT | NOMINATED NODE | READINESS GATES | QOS | LABELS | AGE
+  row: default | sample | 1/2 | CrashLoopBackOff | 3 | 58d | n/a | n/a | n/a | n/a | 10.1.2.3 | node-a | runner |  |  | Burstable | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=secrets
   headers: NAMESPACE | NAME | TYPE | DATA | AGE
   row: default | sample | Opaque | 1 | 

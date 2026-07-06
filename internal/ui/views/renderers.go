@@ -63,24 +63,37 @@ func (g GenericRenderer) Header() []Column {
 }
 
 func (g GenericRenderer) Row(u *unstructured.Unstructured) []Cell {
+	return g.RowCtx(u, RowContext{})
+}
+
+// RowCtx renders a row with cross-object context available (metrics,
+// relationship counts). GenericRenderer thus satisfies ContextRenderer; rows
+// without metric columns simply ignore the context.
+func (g GenericRenderer) RowCtx(u *unstructured.Unstructured, rc RowContext) []Cell {
 	cols := g.Columns
 	if len(cols) == 0 {
 		cols = []string{"NAME", "NAMESPACE", "AGE"}
 	}
 	out := make([]Cell, 0, len(cols))
 	for _, col := range cols {
-		switch strings.ToUpper(col) {
-		case "NAME":
-			out = append(out, Cell{Text: u.GetName()})
-		case "NAMESPACE", "NS":
-			out = append(out, Cell{Text: u.GetNamespace()})
-		case "AGE":
-			out = append(out, Cell{Text: age(u.GetCreationTimestamp().Time)})
-		default:
-			out = append(out, Cell{Text: g.valueFor(u, col)})
-		}
+		out = append(out, g.cell(u, col, rc))
 	}
 	return out
+}
+
+func (g GenericRenderer) cell(u *unstructured.Unstructured, col string, rc RowContext) Cell {
+	switch strings.ToUpper(col) {
+	case "NAME":
+		return Cell{Text: u.GetName()}
+	case "NAMESPACE", "NS":
+		return Cell{Text: u.GetNamespace()}
+	case "AGE":
+		return Cell{Text: age(u.GetCreationTimestamp().Time)}
+	}
+	if cell, ok := g.metricCell(u, col, rc); ok {
+		return cell
+	}
+	return Cell{Text: g.valueFor(u, col)}
 }
 
 func (g GenericRenderer) Detail(u *unstructured.Unstructured) DetailContent {
@@ -140,14 +153,14 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 
 func Builtins() map[schema.GroupVersionResource]Renderer {
 	renderers := []Renderer{
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Columns: []string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "LAST RESTART", "IP", "NODE", "SERVICE-ACCOUNT", "NOMINATED NODE", "READINESS GATES", "QOS", "LABELS", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Columns: []string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "LAST RESTART", "CPU", "MEM", "%CPU/R", "%MEM/R", "IP", "NODE", "SERVICE-ACCOUNT", "NOMINATED NODE", "READINESS GATES", "QOS", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, Columns: []string{"NAMESPACE", "NAME", "READY", "UP-TO-DATE", "AVAILABLE", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "services"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "EXTERNAL-IP", "SELECTOR", "PORTS", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "endpoints"}, Columns: []string{"NAMESPACE", "NAME", "ENDPOINTS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, Columns: []string{"NAMESPACE", "NAME", "DATA", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "secrets"}, Columns: []string{"NAMESPACE", "NAME", "TYPE", "DATA", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}, Columns: []string{"NAME", "STATUS", "LABELS", "AGE"}},
-		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "nodes"}, Columns: []string{"NAME", "STATUS", "ROLE", "ARCH", "TAINTS", "VERSION", "OS-IMAGE", "KERNEL", "INTERNAL-IP", "EXTERNAL-IP", "LABELS", "AGE"}},
+		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "nodes"}, Columns: []string{"NAME", "STATUS", "ROLE", "ARCH", "TAINTS", "VERSION", "CPU", "%CPU", "MEM", "%MEM", "PODS", "OS-IMAGE", "KERNEL", "INTERNAL-IP", "EXTERNAL-IP", "LABELS", "AGE"}},
 		GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "events"}, Columns: []string{"LAST SEEN", "TYPE", "REASON", "OBJECT", "MESSAGE"}},
 	}
 	for name, columns := range builtinColumns() {

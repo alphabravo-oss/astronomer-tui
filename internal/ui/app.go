@@ -16,6 +16,7 @@ import (
 	"github.com/rivo/tview"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -51,6 +52,7 @@ type Options struct {
 	AIProvider     ai.LLMProvider
 	LogStreamer    func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
 	Version        string
+	MetricsPoller  metricsSnapshotter
 }
 
 type App struct {
@@ -149,6 +151,9 @@ func (a *App) Run(ctx context.Context) error {
 		return event
 	})
 	a.updateChrome()
+	if a.options.MetricsPoller != nil {
+		a.startMetrics(ctx, a.options.MetricsPoller)
+	}
 	a.showSplash(ctx)
 	err := a.app.Run()
 	if a.options.SessionStore != nil {
@@ -178,7 +183,44 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(keyBinding(tcell.KeyCtrlP, "palette", "Command palette", "global", true, wrap(a.showPalette)))
 	k.Add(keyBinding(tcell.KeyCtrlE, "ai-explain", "AI explain selection", "global", true, wrap(a.showFailureAI)))
 	k.Add(runeBinding('?', "help", "Show this overlay", "global", true, wrap(a.showHelp)))
+	// Semantic sort keys (Shift+letter) resolve to a column by header name.
+	for _, sk := range semanticSortKeys() {
+		col := sk.column
+		k.Add(runeBinding(sk.rune, "sort:"+strings.ToLower(col), "Sort by "+col, "table", false, func() { a.sortByColumnName(col) }))
+	}
 	return k
+}
+
+type semanticSortKey struct {
+	rune   rune
+	column string
+}
+
+// semanticSortKeys maps Shift+<letter> to a target column header (k9s parity).
+func semanticSortKeys() []semanticSortKey {
+	return []semanticSortKey{
+		{'N', "NAME"},
+		{'A', "AGE"},
+		{'S', "STATUS"},
+		{'R', "READY"},
+		{'C', "CPU"},
+		{'M', "MEM"},
+		{'P', "PODS"},
+	}
+}
+
+// sortByColumnName sets the sort to the first column whose header matches name.
+func (a *App) sortByColumnName(name string) {
+	if a.renderer == nil {
+		return
+	}
+	for i, header := range a.renderer.Header() {
+		if strings.EqualFold(header.Name, name) {
+			a.setSort(i)
+			return
+		}
+	}
+	a.Flash(FlashInfo, "no %s column in this view", name)
 }
 
 func initialResourceGVR(state session.State) schema.GroupVersionResource {
@@ -634,6 +676,13 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	if !a.switchResource(ctx, gvr) {
 		return false
 	}
+	// Repoint metrics at the new cluster so usage columns don't show stale data.
+	a.mu.RLock()
+	hadMetrics := a.metrics != nil
+	a.mu.RUnlock()
+	if hadMetrics && client.Dynamic != nil {
+		a.startMetrics(ctx, cluster.NewMetricsPoller(client.Dynamic, 0))
+	}
 	a.nav.ResetToRoot()
 	a.updateChrome()
 	return true
@@ -958,15 +1007,73 @@ func (a *App) rowContext(gvr schema.GroupVersionResource, objects []*unstructure
 	}
 	if gvr.Resource == "nodes" {
 		rc.PodsByNode = a.podsByNode()
+		rc.Alloc = nodeAllocatable(objects)
 	}
 	return rc
 }
 
-// metricsSnapshotter is satisfied by the metrics poller (wired in P1). Kept as
-// an interface so the UI has no hard dependency on the poller implementation
-// and tests can inject fakes.
+// nodeAllocatable extracts per-node allocatable CPU/mem/pods from node objects
+// so the metrics renderer can compute % columns without another API call.
+func nodeAllocatable(nodes []*unstructured.Unstructured) views.NodeAllocatable {
+	alloc := views.NodeAllocatable{
+		CPU:  map[string]int64{},
+		Mem:  map[string]int64{},
+		Pods: map[string]int64{},
+	}
+	for _, node := range nodes {
+		name := node.GetName()
+		if cpu, ok, _ := unstructured.NestedString(node.Object, "status", "allocatable", "cpu"); ok {
+			if q, err := resource.ParseQuantity(cpu); err == nil {
+				alloc.CPU[name] = q.MilliValue()
+			}
+		}
+		if mem, ok, _ := unstructured.NestedString(node.Object, "status", "allocatable", "memory"); ok {
+			if q, err := resource.ParseQuantity(mem); err == nil {
+				alloc.Mem[name] = q.Value()
+			}
+		}
+		if pods, ok, _ := unstructured.NestedString(node.Object, "status", "allocatable", "pods"); ok {
+			if q, err := resource.ParseQuantity(pods); err == nil {
+				alloc.Pods[name] = q.Value()
+			}
+		}
+	}
+	return alloc
+}
+
+// metricsSnapshotter is satisfied by the metrics poller. Kept as an interface
+// so the UI has no hard dependency on the poller implementation and tests can
+// inject fakes.
 type metricsSnapshotter interface {
 	Snapshot() (map[string]views.PodMetrics, map[string]views.NodeMetrics, views.NodeAllocatable, bool)
+	Start(context.Context)
+	Subscribe() <-chan struct{}
+}
+
+// startMetrics installs and starts a metrics poller, redrawing the current view
+// after each successful poll.
+func (a *App) startMetrics(ctx context.Context, poller metricsSnapshotter) {
+	if poller == nil {
+		return
+	}
+	a.mu.Lock()
+	a.metrics = poller
+	a.mu.Unlock()
+	poller.Start(ctx)
+	ticks := poller.Subscribe()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-ticks:
+				if !ok {
+					return
+				}
+				a.app.QueueUpdateDraw(func() { a.renderCurrent() })
+			}
+		}
+	}()
 }
 
 // podsByNode counts running pods per node from the pods informer if it is
@@ -1198,11 +1305,15 @@ func BuildRowsCtx(renderer views.Renderer, objects []*unstructured.Unstructured,
 		}
 		return pairs[i].obj.GetName() < pairs[j].obj.GetName()
 	})
+	sortColName := ""
+	if header := renderer.Header(); sortCol >= 0 && sortCol < len(header) {
+		sortColName = header[sortCol].Name
+	}
 	sort.SliceStable(pairs, func(i, j int) bool {
 		if sortCol >= len(pairs[i].row) || sortCol >= len(pairs[j].row) {
 			return false
 		}
-		c := views.CompareCellValues(pairs[i].row[sortCol].Text, pairs[j].row[sortCol].Text)
+		c := views.CompareCellValuesFor(sortColName, pairs[i].row[sortCol].Text, pairs[j].row[sortCol].Text)
 		if sortDesc {
 			return c > 0
 		}
