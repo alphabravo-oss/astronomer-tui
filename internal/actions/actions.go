@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -38,6 +39,20 @@ func CatalogFor(kind string) []Action {
 			Action{Name: "scale", Key: "s", Description: "Scale replicas", Destructive: true},
 			Action{Name: "restart", Key: "r", Description: "Restart workload", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open merged workload logs"},
+		)
+	case "DaemonSet":
+		return append(common,
+			Action{Name: "restart", Key: "r", Description: "Restart daemonset", Destructive: true},
+			Action{Name: "logs", Key: "l", Description: "Open merged workload logs"},
+		)
+	case "ReplicaSet":
+		return append(common,
+			Action{Name: "scale", Key: "s", Description: "Scale replicas", Destructive: true},
+		)
+	case "CronJob":
+		return append(common,
+			Action{Name: "trigger", Key: "t", Description: "Trigger a job now", Destructive: true},
+			Action{Name: "suspend", Key: "z", Description: "Toggle suspend", Destructive: true},
 		)
 	case "Pod":
 		return append(common,
@@ -86,6 +101,52 @@ func ScaleStatefulSet(ctx context.Context, client kubernetes.Interface, namespac
 		_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
 		return err
 	})
+}
+
+func ScaleReplicaSet(ctx context.Context, client kubernetes.Interface, namespace, name string, replicas int32) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		rs, err := client.AppsV1().ReplicaSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		rs.Spec.Replicas = &replicas
+		_, err = client.AppsV1().ReplicaSets(namespace).Update(ctx, rs, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func RestartDaemonSet(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`, time.Now().Format(time.RFC3339))
+	_, err := client.AppsV1().DaemonSets(namespace).Patch(ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+	return err
+}
+
+// SuspendCronJob toggles a CronJob's spec.suspend to the given value.
+func SuspendCronJob(ctx context.Context, client kubernetes.Interface, namespace, name string, suspend bool) error {
+	patch := fmt.Sprintf(`{"spec":{"suspend":%t}}`, suspend)
+	_, err := client.BatchV1().CronJobs(namespace).Patch(ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+	return err
+}
+
+// TriggerCronJob creates a manual Job from a CronJob's jobTemplate, mirroring
+// `kubectl create job --from=cronjob/<name>`. The Job is not owned by the
+// CronJob so it survives independent of the schedule.
+func TriggerCronJob(ctx context.Context, client kubernetes.Interface, namespace, name, jobName string) error {
+	cj, err := client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        jobName,
+			Namespace:   namespace,
+			Labels:      map[string]string{"astrotui.io/triggered-by": name},
+			Annotations: map[string]string{"cronjob.kubernetes.io/instantiate": "manual"},
+		},
+		Spec: cj.Spec.JobTemplate.Spec,
+	}
+	_, err = client.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	return err
 }
 
 func DeploymentRestartAnnotation(d appsv1.Deployment) string {

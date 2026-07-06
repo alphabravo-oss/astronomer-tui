@@ -222,6 +222,8 @@ func (a *App) buildTableKeymap() *Keymap {
 	k.Add(keyBinding(tcell.KeyCtrlD, "delete", "Delete selected resource", "table", true, wrap(a.showDelete)))
 	k.Add(runeBinding('s', "scale", "Scale replicas", "table", true, wrap(a.showScale)))
 	k.Add(runeBinding('r', "restart", "Rollout restart", "table", true, wrap(a.showRestart)))
+	k.Add(runeBinding('t', "trigger", "Trigger job from cronjob", "table", true, wrap(a.showTrigger)))
+	k.Add(runeBinding('z', "suspend", "Toggle cronjob suspend", "table", true, wrap(a.showSuspendToggle)))
 	k.Add(runeBinding('l', "logs", "Open logs", "table", true, wrap(a.showLogsPlan)))
 	k.Add(runeBinding('x', "exec", "Exec into pod", "table", true, wrap(a.showExecPlan)))
 	k.Add(runeBinding('f', "port-forward", "Forward a port", "table", true, wrap(a.showPortForwardPlan)))
@@ -994,8 +996,13 @@ func (a *App) showScale() {
 		a.showMessage("Scale unavailable", fmt.Sprintf("scale is not implemented for %s", req.Kind))
 		return
 	}
+	current := ""
+	if replicas, ok, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas"); ok {
+		current = fmt.Sprintf("%d", replicas)
+	}
 	input := tview.NewInputField().
 		SetLabel(fmt.Sprintf("Replicas for %s/%s: ", req.Kind, req.ResourceName)).
+		SetText(current).
 		SetFieldWidth(8)
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
@@ -1030,11 +1037,11 @@ func (a *App) showRestart() {
 }
 
 func scalableKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet"
+	return kind == "Deployment" || kind == "StatefulSet" || kind == "ReplicaSet"
 }
 
 func restartableKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet"
+	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet"
 }
 
 func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitle, failureTitle string) {

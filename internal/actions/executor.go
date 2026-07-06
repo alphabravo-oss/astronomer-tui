@@ -70,6 +70,8 @@ func (e Executor) scaleWorkload(ctx context.Context, req Request, replicas int32
 		return ScaleDeployment(ctx, e.Clientset, req.Namespace, req.ResourceName, replicas)
 	case "StatefulSet":
 		return ScaleStatefulSet(ctx, e.Clientset, req.Namespace, req.ResourceName, replicas)
+	case "ReplicaSet":
+		return ScaleReplicaSet(ctx, e.Clientset, req.Namespace, req.ResourceName, replicas)
 	default:
 		return fmt.Errorf("scale is not implemented for %s", req.Kind)
 	}
@@ -81,6 +83,8 @@ func (e Executor) restartWorkload(ctx context.Context, req Request) error {
 		return RestartDeployment(ctx, e.Clientset, req.Namespace, req.ResourceName)
 	case "StatefulSet":
 		return RestartStatefulSet(ctx, e.Clientset, req.Namespace, req.ResourceName)
+	case "DaemonSet":
+		return RestartDaemonSet(ctx, e.Clientset, req.Namespace, req.ResourceName)
 	default:
 		return fmt.Errorf("restart is not implemented for %s", req.Kind)
 	}
