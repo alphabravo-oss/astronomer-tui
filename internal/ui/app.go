@@ -96,6 +96,7 @@ type App struct {
 	cmdHistory       []string
 	histIdx          int
 	userAliases      map[string]string
+	customViews      map[string]config.ViewSpec
 }
 
 // isRunning reports whether the tview event loop is active, so background
@@ -151,6 +152,7 @@ func New(options Options) *App {
 	}
 	app.wideMode = options.Config.UI.WideDefault
 	app.userAliases = config.LoadAliases(aliasPaths()...)
+	app.customViews = config.LoadViews(viewPaths()...)
 	app.table.SetSelectionChangedFunc(func(row, _ int) { app.rememberSelection(row) })
 	app.applySkin()
 	return app
@@ -162,6 +164,28 @@ func aliasPaths() []string {
 		filepath.Join(config.DefaultDir(), "aliases.yaml"),
 		filepath.Join(config.DefaultK9sDir(), "aliases.yaml"),
 	}
+}
+
+// viewPaths returns the custom-columns file search order.
+func viewPaths() []string {
+	return []string{filepath.Join(config.DefaultDir(), "views.yaml")}
+}
+
+// customViewFor returns the user-defined column spec for a GVR, if any.
+func (a *App) customViewFor(gvr schema.GroupVersionResource) (config.ViewSpec, bool) {
+	if a.customViews == nil {
+		return config.ViewSpec{}, false
+	}
+	keys := []string{gvr.Group + "/" + gvr.Version + "/" + gvr.Resource}
+	if gvr.Group == "" {
+		keys = append(keys, gvr.Version+"/"+gvr.Resource)
+	}
+	for _, k := range keys {
+		if spec, ok := a.customViews[k]; ok {
+			return spec, true
+		}
+	}
+	return config.ViewSpec{}, false
 }
 
 // rootLayout composes the persistent chrome (header, crumbs, flash) around the
@@ -665,6 +689,10 @@ func rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
 func (a *App) rendererFor(ctx context.Context, gvr schema.GroupVersionResource) views.Renderer {
 	if gvr.Resource == "" || gvr.Version == "" {
 		return nil
+	}
+	// User views.yaml columns override builtin/CRD/generic renderers.
+	if spec, ok := a.customViewFor(gvr); ok {
+		return views.CustomRenderer(gvr, spec.Columns)
 	}
 	if renderer, ok := views.Builtins()[gvr]; ok {
 		return renderer

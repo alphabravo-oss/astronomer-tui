@@ -476,7 +476,8 @@ func rendererSnapshotObject(gvr schema.GroupVersionResource) *unstructured.Unstr
 				"ready":        false,
 				"restartCount": int64(2),
 				"state":        map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}},
-				"lastState":    map[string]any{"terminated": map[string]any{"finishedAt": "2026-05-09T00:00:00Z", "reason": "Error"}},
+				// No lastState.terminated.finishedAt so the LAST RESTART column
+				// stays empty and the golden snapshot is time-independent.
 			},
 		}
 		spec := obj.Object["spec"].(map[string]any)
@@ -507,5 +508,23 @@ func clusterScopedSnapshotResource(resource string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func TestCustomRenderer(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	r := CustomRenderer(gvr, []string{"NAME", "STATUS", "CUSTOM:.metadata.annotations.team"})
+	headers := r.Header()
+	if len(headers) != 3 || headers[2].Name != "TEAM" {
+		t.Fatalf("unexpected custom headers %#v", headers)
+	}
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "api", "annotations": map[string]any{"team": "platform"}},
+		"status":   map[string]any{"phase": "Running"},
+	}}
+	obj.SetName("api")
+	row := r.Row(obj)
+	if row[0].Text != "api" || row[2].Text != "platform" {
+		t.Fatalf("unexpected custom row %#v", row)
 	}
 }

@@ -132,6 +132,33 @@ func YAMLDetail(u *unstructured.Unstructured) (string, error) {
 	return string(out), nil
 }
 
+// CustomRenderer builds a renderer from a user column spec. Entries prefixed
+// with "CUSTOM:" carry a JSONPath; their header is derived from the path tail.
+func CustomRenderer(gvr schema.GroupVersionResource, columnSpecs []string) Renderer {
+	columns := make([]string, 0, len(columnSpecs))
+	paths := map[string]string{}
+	for _, spec := range columnSpecs {
+		if jp, ok := strings.CutPrefix(spec, "CUSTOM:"); ok {
+			name := customColumnName(jp)
+			columns = append(columns, name)
+			paths[strings.ToUpper(name)] = jp
+		} else {
+			columns = append(columns, spec)
+		}
+	}
+	return GenericRenderer{Resource: gvr, Columns: columns, Paths: paths}
+}
+
+func customColumnName(jsonpath string) string {
+	trimmed := strings.Trim(strings.TrimSuffix(strings.TrimPrefix(jsonpath, "{"), "}"), ".")
+	parts := strings.Split(trimmed, ".")
+	last := parts[len(parts)-1]
+	if last == "" {
+		return "CUSTOM"
+	}
+	return strings.ToUpper(last)
+}
+
 func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version string) Renderer {
 	if version == "" {
 		for _, item := range crd.Spec.Versions {

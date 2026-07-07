@@ -21,7 +21,7 @@
   row: sample | 10Gi | ReadWriteOnce | Delete | Ready | default/data |  | Failed |  | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=pods
   headers: NAMESPACE | NAME | READY | STATUS | RESTARTS | LAST RESTART | CPU | MEM | %CPU/R | %MEM/R | IP | NODE | SERVICE-ACCOUNT | NOMINATED NODE | READINESS GATES | QOS | LABELS | AGE
-  row: default | sample | 1/2 | CrashLoopBackOff | 3 | 58d | n/a | n/a | n/a | n/a | 10.1.2.3 | node-a | runner |  |  | Burstable | app=api,node-role.kubernetes.io/worker= | 
+  row: default | sample | 1/2 | CrashLoopBackOff | 3 |  | n/a | n/a | n/a | n/a | 10.1.2.3 | node-a | runner |  |  | Burstable | app=api,node-role.kubernetes.io/worker= | 
 /v1, Resource=secrets
   headers: NAMESPACE | NAME | TYPE | DATA | AGE
   row: default | sample | Opaque | 1 | 
