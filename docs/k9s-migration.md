@@ -63,7 +63,10 @@ the intentional divergences.
 | `:xray <kind>` | `:xray deploy\|sts\|ds` (dependency tree) |
 | `:pulses` | `:pulses` (health tiles) |
 | `:rbac` | `:rbac u:\|g:\|s:ns/sa`; `:can <verb> <res>` |
+| `:helm` | `:helm` (releases; needs `helm` in PATH), Enter/`d` = history |
+| `:popeye` | `:popeye` (cluster scan; needs `popeye` in PATH) |
 | `:alias` | `:alias` (aliases + commands) |
+| — | `:ai` (cluster-aware AI chat) |
 | `:q` | `:q`, `:quit` |
 | port-forwards | `:pf` |
 | — | `:flash` (recent status messages) |
@@ -90,8 +93,10 @@ k9s one) mapping `alias: group/version/resource`.
 
 ## Not yet implemented (roadmap)
 
-Popeye scan, Helm releases, native `hotkeys.yaml` key binding, `views.yaml`
-custom columns, port-forward manager status column, AI chat view (`:ai`).
 Benchmarking (`hey`) is intentionally out of scope — use a `plugins.yaml`
-entry instead. (Pulses, XRay, RBAC/can-i, `aliases.yaml`, wide-mode toggle,
-screendump, and command autocomplete/history are implemented.)
+entry instead. Everything else from the parity plan is implemented: metrics,
+drill-down, filter modes, coloring, multi-select/bulk, all resource verbs
+(scale/restart/rollout/cronjob/kill/attach/secret-decode/cordon/drain), logs
+deluxe, pulses, xray, RBAC/can-i, Helm + Popeye (shell-out), palette jump-any,
+AI chat, `aliases.yaml`/`hotkeys.yaml`/`views.yaml`, wide mode, screendump,
+autocomplete/history, and `--readonly`/`--command` flags.

@@ -33,6 +33,8 @@ func commandCatalog() []commandSpec {
 		{usage: ":pulses", help: "Cluster health tiles"},
 		{usage: ":xray <kind>", help: "Dependency tree (deploy/sts/ds)"},
 		{usage: ":ai", help: "Cluster-aware AI chat"},
+		{usage: ":helm", help: "Helm releases (needs helm CLI)"},
+		{usage: ":popeye", help: "Popeye cluster scan (needs popeye CLI)"},
 		{usage: ":rbac u:|g:|s:", help: "Aggregate a subject's RBAC rules"},
 		{usage: ":can <verb> <res>", help: "Check access (SelfSubjectAccessReview)"},
 		{usage: ":alias", help: "List aliases and commands"},
@@ -104,6 +106,16 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "ai"}, true
+	case "helm":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "helm"}, true
+	case "popeye":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "popeye"}, true
 	case "rbac":
 		if len(parts) != 2 {
 			return Command{}, false

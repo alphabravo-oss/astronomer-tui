@@ -929,6 +929,12 @@ func (a *App) runCommandString(ctx context.Context, text string) bool {
 	case "ai":
 		a.showAIChat()
 		return true
+	case "helm":
+		a.showHelmView()
+		return true
+	case "popeye":
+		a.showPopeyeView()
+		return true
 	case "rbac":
 		a.showRBACView(ctx, command.Value)
 		return true
