@@ -28,6 +28,14 @@ func ManifestRequest(manifest string) Request {
 	return Request{System: "Explain and lint this Kubernetes manifest.", Prompt: manifest}
 }
 
+// ChatRequest is a general cluster-aware chat turn with injected context.
+func ChatRequest(clusterContext, question string) Request {
+	return Request{
+		System: "You are a Kubernetes assistant embedded in a terminal UI. Use the provided cluster context when relevant and give concise, actionable answers.",
+		Prompt: strings.Join([]string{"Cluster context:", clusterContext, "Question:", question}, "\n"),
+	}
+}
+
 func NaturalLanguageAction(ctx context.Context, provider LLMProvider, actionCatalog, query string) (Response, error) {
 	return provider.Complete(ctx, Request{System: "Return a structured Kubernetes TUI action or a clarifying question.", Prompt: actionCatalog + "\n\nUser intent: " + query})
 }

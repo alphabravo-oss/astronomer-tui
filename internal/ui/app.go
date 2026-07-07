@@ -926,6 +926,9 @@ func (a *App) runCommandString(ctx context.Context, text string) bool {
 	case "xray":
 		a.showXrayView(ctx, command.Value)
 		return true
+	case "ai":
+		a.showAIChat()
+		return true
 	case "rbac":
 		a.showRBACView(ctx, command.Value)
 		return true
