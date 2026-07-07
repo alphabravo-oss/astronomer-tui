@@ -62,3 +62,24 @@ func TestHelpOverlayReflectsRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestParseHotkeySpec(t *testing.T) {
+	if k, r, ok := parseHotkeySpec("a"); !ok || k != tcell.KeyRune || r != 'a' {
+		t.Fatalf("single rune: %v %q %v", k, r, ok)
+	}
+	if k, _, ok := parseHotkeySpec("f5"); !ok || k != tcell.KeyF5 {
+		t.Fatalf("f5: %v %v", k, ok)
+	}
+	if k, _, ok := parseHotkeySpec("ctrl-t"); !ok || k != tcell.KeyCtrlT {
+		t.Fatalf("ctrl-t: %v %v", k, ok)
+	}
+	if _, r, ok := parseHotkeySpec("shift-1"); !ok || r != '!' {
+		t.Fatalf("shift-1: %q %v", r, ok)
+	}
+	if _, r, ok := parseHotkeySpec("shift-p"); !ok || r != 'P' {
+		t.Fatalf("shift-p: %q %v", r, ok)
+	}
+	if _, _, ok := parseHotkeySpec("meta-super-x"); ok {
+		t.Fatal("unknown spec should fail")
+	}
+}

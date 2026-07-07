@@ -212,7 +212,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.runCtx = ctx
 	a.table.SetTitle(fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, gvr.Resource)).SetBorder(true)
-	a.tableKeymap = a.buildTableKeymap()
+	a.tableKeymap = a.buildTableKeymapWithHotkeys()
 	a.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if a.tableKeymap.handle(event) {
 			return nil
@@ -299,6 +299,37 @@ func (a *App) buildTableKeymap() *Keymap {
 		k.Add(runeBinding(sk.rune, "sort:"+strings.ToLower(col), "Sort by "+col, "table", false, func() { a.sortByColumnName(col) }))
 	}
 	return k
+}
+
+// buildTableKeymapWithHotkeys prepends user hotkeys.yaml bindings so an explicit
+// user binding wins over the built-in for the same key (handle returns the first
+// match).
+func (a *App) buildTableKeymapWithHotkeys() *Keymap {
+	k := &Keymap{}
+	for _, hk := range config.LoadHotkeys(hotkeyPaths()...) {
+		key, r, ok := parseHotkeySpec(hk.Key)
+		if !ok {
+			a.Flash(FlashWarn, "hotkeys: unrecognized key %q", hk.Key)
+			continue
+		}
+		cmd := hk.Command
+		desc := hk.Description
+		if desc == "" {
+			desc = "run :" + cmd
+		}
+		k.Add(KeyBinding{Key: key, Rune: r, Name: "hotkey:" + cmd, Desc: desc, Scope: "table", Visible: true, Action: func() { a.safe(func() { a.runCommandString(a.runCtx, cmd) }) }})
+	}
+	base := a.buildTableKeymap()
+	k.bindings = append(k.bindings, base.bindings...)
+	return k
+}
+
+// hotkeyPaths returns the hotkeys file search order: astrotui dir then k9s dir.
+func hotkeyPaths() []string {
+	return []string{
+		filepath.Join(config.DefaultDir(), "hotkeys.yaml"),
+		filepath.Join(config.DefaultK9sDir(), "hotkeys.yaml"),
+	}
 }
 
 type semanticSortKey struct {

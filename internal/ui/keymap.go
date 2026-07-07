@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -85,6 +86,47 @@ var keyNames = map[tcell.Key]string{
 	tcell.KeyCtrlW:  "Ctrl+W",
 	tcell.KeyCtrlL:  "Ctrl+L",
 	tcell.KeyCtrlS:  "Ctrl+S",
+}
+
+// parseHotkeySpec converts a hotkeys.yaml key string into a KeyBinding trigger
+// (Key/Rune). Supports single runes, f1-f12, ctrl-<letter>, and shift-<digit>.
+func parseHotkeySpec(spec string) (tcell.Key, rune, bool) {
+	s := strings.ToLower(strings.TrimSpace(spec))
+	if s == "" {
+		return 0, 0, false
+	}
+	if len([]rune(s)) == 1 {
+		return tcell.KeyRune, []rune(s)[0], true
+	}
+	if fkey, ok := fKeys[s]; ok {
+		return fkey, 0, true
+	}
+	if rest, ok := strings.CutPrefix(s, "ctrl-"); ok && len(rest) == 1 {
+		c := rest[0]
+		if c >= 'a' && c <= 'z' {
+			return tcell.Key(int(tcell.KeyCtrlA) + int(c-'a')), 0, true
+		}
+	}
+	if rest, ok := strings.CutPrefix(s, "shift-"); ok && len(rest) == 1 {
+		if sym, ok := shiftDigitSymbols[rest[0]]; ok {
+			return tcell.KeyRune, sym, true
+		}
+		if rest[0] >= 'a' && rest[0] <= 'z' {
+			return tcell.KeyRune, rune(rest[0] - 'a' + 'A'), true
+		}
+	}
+	return 0, 0, false
+}
+
+var fKeys = map[string]tcell.Key{
+	"f1": tcell.KeyF1, "f2": tcell.KeyF2, "f3": tcell.KeyF3, "f4": tcell.KeyF4,
+	"f5": tcell.KeyF5, "f6": tcell.KeyF6, "f7": tcell.KeyF7, "f8": tcell.KeyF8,
+	"f9": tcell.KeyF9, "f10": tcell.KeyF10, "f11": tcell.KeyF11, "f12": tcell.KeyF12,
+}
+
+var shiftDigitSymbols = map[byte]rune{
+	'1': '!', '2': '@', '3': '#', '4': '$', '5': '%',
+	'6': '^', '7': '&', '8': '*', '9': '(', '0': ')',
 }
 
 // rune builds a printable-rune binding.
