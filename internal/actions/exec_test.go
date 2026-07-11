@@ -38,6 +38,10 @@ func TestRunExecRequiresConfigAndClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing client error")
 	}
+	err = RunAttach(context.Background(), nil, nil, AttachTarget{Namespace: "default", Pod: "api", Container: "app"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected attach missing config error")
+	}
 	_, err = ExecTargets(corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "default"}}, "")
 	if err == nil {
 		t.Fatal("expected no containers error")

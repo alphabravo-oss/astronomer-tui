@@ -200,14 +200,30 @@ func (a *App) executeActionEntry(entry palette.Entry) bool {
 		a.showScale()
 	case "restart":
 		a.showRestart()
+	case "suspend":
+		a.showSuspendToggle(true)
+	case "resume":
+		a.showSuspendToggle(false)
 	case "logs":
 		a.showLogsPlan()
 	case "exec":
 		a.showExecPlan()
+	case "attach":
+		a.showAttachPlan()
 	case "port-forward":
 		a.showPortForwardPlan()
 	case "describe":
+		a.showDescribe()
+	case "yaml":
 		a.showDetail()
+	case "events":
+		a.showEventsForSelected()
+	case "owner":
+		a.showOwnerForSelected()
+	case "related":
+		a.showRelatedForSelected()
+	case "xray":
+		a.showResourceGraph()
 	default:
 		return false
 	}
@@ -415,9 +431,9 @@ func (a *App) actionCatalog() []actions.Action {
 
 func requiredDiscoveryVerb(action string) string {
 	switch action {
-	case "describe", "logs":
+	case "describe", "yaml", "logs":
 		return "get"
-	case "edit", "scale", "restart":
+	case "edit", "scale", "restart", "suspend", "resume":
 		return "patch"
 	case "delete":
 		return "delete"

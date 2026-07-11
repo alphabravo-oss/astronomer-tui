@@ -46,11 +46,13 @@ Wave 2 includes discovery-driven preferred-resource aliases and mutation availab
 ## Phase 2 — k9s workflow parity
 
 - [ ] Complete built-in resource/action matrix, including Jobs/CronJobs, DaemonSets, RBAC, storage, networking, autoscaling, and CRDs.
-- [ ] Describe/events/YAML views, owner navigation, resource graph/xray, and related-resource jumps.
-- [ ] Multi-container logs with previous logs, timestamps, since/tail, wrap, search, save, and workload aggregation.
+- [x] Describe/events/YAML views, owner navigation, resource graph/xray, and related-resource jumps.
+- [x] Multi-container logs with previous logs, timestamps, since/tail, wrap, search, save, and workload aggregation.
 - [ ] Shell/exec container selection, copy, attach, port-forward lifecycle, and benchmark management.
 - [ ] Context/namespace/all-namespaces switching, aliases, hotkeys, skins, columns, plugins, and read-only mode compatibility.
 - [ ] Pulses/health views and optional vulnerability/image scanning without sending cluster data externally by default.
+
+Wave 3 adds generic describe/YAML/events views, controller-owner jumps, related-resource menus, bounded owner/xray graphs, all-container workload logs with advanced request options, DaemonSet restart/log actions, Job and CronJob suspend/resume previews, Pod attach with RBAC preflight, and a bounded `:health` pulse view. Copy workflows, benchmark management, image scanning, and the remaining compatibility matrix stay open.
 
 ## Phase 3 — differentiated capabilities
 

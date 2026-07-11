@@ -11,12 +11,27 @@ import (
 	"github.com/rivo/tview"
 	"io"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type logViewOptions struct {
+	TailLines    *int64
+	SinceSeconds *int64
+	Follow       bool
+	Previous     bool
+	Timestamps   bool
+}
+
+func defaultLogViewOptions() logViewOptions {
+	tail := int64(500)
+	return logViewOptions{TailLines: &tail, Follow: true}
+}
 
 func (a *App) showLogsPlan() {
 	if pod, ok := a.selectedPod(); ok && len(logs.ContainerNames(pod)) > 1 {
@@ -28,16 +43,59 @@ func (a *App) showLogsPlan() {
 		a.showMessage("Logs unavailable", err.Error())
 		return
 	}
-	a.showLogsView(targets)
+	a.showLogsViewWithOptions(targets, defaultLogViewOptions())
 }
 
 func (a *App) showLogsView(targets []logs.PodLogTarget) {
+	a.showLogsViewWithOptions(targets, defaultLogViewOptions())
+}
+
+func (a *App) showLogOptionsPlan() {
+	targets, err := a.selectedLogTargets(context.Background())
+	if err != nil {
+		a.showMessage("Logs unavailable", err.Error())
+		return
+	}
+	tail, since := "500", ""
+	previous, timestamps, follow := false, false, true
+	form := tview.NewForm().
+		AddInputField("Tail lines", tail, 12, nil, func(value string) { tail = value }).
+		AddInputField("Since seconds", since, 12, nil, func(value string) { since = value }).
+		AddCheckbox("Previous container", previous, func(value bool) { previous = value }).
+		AddCheckbox("Server timestamps", timestamps, func(value bool) { timestamps = value }).
+		AddCheckbox("Follow", follow, func(value bool) { follow = value })
+	form.AddButton("Open", func() {
+		opts := logViewOptions{Previous: previous, Timestamps: timestamps, Follow: follow && !previous}
+		if strings.TrimSpace(tail) != "" {
+			value, parseErr := strconv.ParseInt(strings.TrimSpace(tail), 10, 64)
+			if parseErr != nil || value < 0 {
+				a.showMessage("Invalid log options", "tail lines must be a non-negative integer")
+				return
+			}
+			opts.TailLines = &value
+		}
+		if strings.TrimSpace(since) != "" {
+			value, parseErr := strconv.ParseInt(strings.TrimSpace(since), 10, 64)
+			if parseErr != nil || value < 0 {
+				a.showMessage("Invalid log options", "since seconds must be a non-negative integer")
+				return
+			}
+			opts.SinceSeconds = &value
+		}
+		a.showLogsViewWithOptions(targets, opts)
+	})
+	form.AddButton("Cancel", func() { a.app.SetRoot(a.table, true) })
+	form.SetTitle(" Log options ").SetBorder(true)
+	a.app.SetRoot(form, true)
+}
+
+func (a *App) showLogsViewWithOptions(targets []logs.PodLogTarget, opts logViewOptions) {
 	ctx, cancel := context.WithCancel(context.Background())
 	buffer := logs.NewBuffer(10_000)
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
 	wrap := true
 	view.SetWrap(wrap).SetWordWrap(true)
-	view.SetTitle(" Logs ").SetBorder(true)
+	view.SetTitle(logViewTitle(opts)).SetBorder(true)
 	filter := ""
 	search := logSearchState{}
 	gotoPending := false
@@ -49,11 +107,16 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 	for _, target := range targets {
 		target := target
 		go func() {
-			writer := newLogLineWriter(target.Pod, buffer, func() {
+			source := target.Pod
+			if target.Container != "" {
+				source += "/" + target.Container
+			}
+			writer := newLogLineWriter(source, buffer, func() {
 				a.app.QueueUpdateDraw(render)
 			})
-			if err := streamer(ctx, target, logs.RequestOptions{Follow: true}, writer); err != nil {
-				buffer.Append(target.Pod, "stream error: "+err.Error(), time.Now())
+			request := logs.RequestOptions{TailLines: opts.TailLines, SinceSeconds: opts.SinceSeconds, Follow: opts.Follow, Previous: opts.Previous, Timestamps: opts.Timestamps}
+			if err := streamer(ctx, target, request, writer); err != nil {
+				buffer.Append(source, "stream error: "+err.Error(), time.Now())
 				a.app.QueueUpdateDraw(render)
 			}
 		}()
@@ -114,13 +177,30 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 	a.app.SetRoot(view, true)
 }
 
+func logViewTitle(opts logViewOptions) string {
+	parts := []string{" Logs"}
+	if opts.Previous {
+		parts = append(parts, "previous")
+	}
+	if opts.TailLines != nil {
+		parts = append(parts, fmt.Sprintf("tail=%d", *opts.TailLines))
+	}
+	if opts.SinceSeconds != nil {
+		parts = append(parts, fmt.Sprintf("since=%ds", *opts.SinceSeconds))
+	}
+	if opts.Follow {
+		parts = append(parts, "follow")
+	}
+	return strings.Join(parts, " ") + " "
+}
+
 func (a *App) jumpLogEvents(view *tview.TextView, buffer *logs.Buffer, filter string) {
 	entry, ok := selectedLogEntry(view, buffer, filter)
 	if !ok || strings.TrimSpace(entry.Pod) == "" {
 		view.SetText("No pod log line selected.")
 		return
 	}
-	a.switchResourceFiltered(context.Background(), schema.GroupVersionResource{Version: "v1", Resource: "events"}, entry.Pod)
+	a.switchResourceFiltered(context.Background(), schema.GroupVersionResource{Version: "v1", Resource: "events"}, logEntryPod(entry.Pod))
 	a.app.SetRoot(a.table, true)
 }
 
@@ -156,6 +236,7 @@ func (a *App) switchResourceFiltered(ctx context.Context, gvr schema.GroupVersio
 	a.mu.Lock()
 	a.filter = filter
 	a.mu.Unlock()
+	a.renderCurrent()
 	a.updateTitle()
 	return true
 }
@@ -176,29 +257,35 @@ func selectedLogEntry(view *tview.TextView, buffer *logs.Buffer, filter string) 
 }
 
 func (a *App) podForLogEntry(ctx context.Context, entry logs.Entry) (corev1.Pod, error) {
-	if pod, ok := a.selectedPod(); ok && pod.Name == entry.Pod {
+	podName := logEntryPod(entry.Pod)
+	if pod, ok := a.selectedPod(); ok && pod.Name == podName {
 		return pod, nil
 	}
 	if a.options.Client == nil || a.options.Client.Clientset == nil {
 		return corev1.Pod{}, fmt.Errorf("kubernetes clientset is required")
 	}
 	namespace := a.options.Client.Namespace
-	if entry.Pod != "" {
+	if podName != "" {
 		targets, err := a.selectedLogTargets(ctx)
 		if err == nil {
 			for _, target := range targets {
-				if target.Pod == entry.Pod && target.Namespace != "" {
+				if target.Pod == podName && target.Namespace != "" {
 					namespace = target.Namespace
 					break
 				}
 			}
 		}
 	}
-	pod, err := a.options.Client.Clientset.CoreV1().Pods(namespace).Get(ctx, entry.Pod, metav1.GetOptions{})
+	pod, err := a.options.Client.Clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return corev1.Pod{}, err
 	}
 	return *pod, nil
+}
+
+func logEntryPod(source string) string {
+	pod, _, _ := strings.Cut(source, "/")
+	return pod
 }
 
 func ownerGVR(kind string) (schema.GroupVersionResource, bool) {
@@ -502,8 +589,30 @@ func (a *App) selectedLogTargets(ctx context.Context) ([]logs.PodLogTarget, erro
 			return nil, fmt.Errorf("could not decode statefulset %s", obj.GetName())
 		}
 		return a.logTargetsForSelector(ctx, statefulSet.Namespace, statefulSet.Spec.Selector)
+	case "DaemonSet":
+		daemonSet, ok := toTyped[appsv1.DaemonSet](obj)
+		if !ok {
+			return nil, fmt.Errorf("could not decode daemonset %s", obj.GetName())
+		}
+		return a.logTargetsForSelector(ctx, daemonSet.Namespace, daemonSet.Spec.Selector)
+	case "ReplicaSet":
+		replicaSet, ok := toTyped[appsv1.ReplicaSet](obj)
+		if !ok {
+			return nil, fmt.Errorf("could not decode replicaset %s", obj.GetName())
+		}
+		return a.logTargetsForSelector(ctx, replicaSet.Namespace, replicaSet.Spec.Selector)
+	case "Job":
+		job, ok := toTyped[batchv1.Job](obj)
+		if !ok {
+			return nil, fmt.Errorf("could not decode job %s", obj.GetName())
+		}
+		selector := job.Spec.Selector
+		if selector == nil {
+			selector = &metav1.LabelSelector{MatchLabels: map[string]string{batchv1.JobNameLabel: job.Name}}
+		}
+		return a.logTargetsForSelector(ctx, job.Namespace, selector)
 	default:
-		return nil, fmt.Errorf("logs are currently implemented for pod and workload selections")
+		return nil, fmt.Errorf("logs are implemented for pod, workload, and job selections")
 	}
 }
 
@@ -525,5 +634,5 @@ func (a *App) logTargetsForSelector(ctx context.Context, namespace string, selec
 	if len(pods) == 0 {
 		return nil, fmt.Errorf("no pods match selector %s", parsed.String())
 	}
-	return logs.TargetsForPods(pods), nil
+	return logs.TargetsForPodsAllContainers(pods), nil
 }

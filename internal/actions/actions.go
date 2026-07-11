@@ -28,6 +28,11 @@ type Action struct {
 func CatalogFor(kind string) []Action {
 	common := []Action{
 		{Name: "describe", Key: "enter", Description: "Open resource details"},
+		{Name: "yaml", Key: "y", Description: "Open full resource YAML"},
+		{Name: "events", Key: "v", Description: "Show related Kubernetes events"},
+		{Name: "owner", Key: "o", Description: "Jump to controller owner"},
+		{Name: "related", Key: "g", Description: "Browse related resources"},
+		{Name: "xray", Key: "z", Description: "Show owner and related-resource graph"},
 		{Name: "edit", Key: "e", Description: "Edit YAML in $EDITOR", Destructive: true},
 		{Name: "delete", Key: "d", Description: "Delete selected resource", Destructive: true},
 	}
@@ -38,9 +43,28 @@ func CatalogFor(kind string) []Action {
 			Action{Name: "restart", Key: "r", Description: "Restart workload", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open merged workload logs"},
 		)
+	case "DaemonSet":
+		return append(common,
+			Action{Name: "restart", Key: "r", Description: "Restart workload", Destructive: true},
+			Action{Name: "logs", Key: "l", Description: "Open merged workload logs"},
+		)
+	case "ReplicaSet":
+		return append(common, Action{Name: "logs", Key: "l", Description: "Open merged workload logs"})
+	case "Job":
+		return append(common,
+			Action{Name: "suspend", Key: "u", Description: "Suspend job execution", Destructive: true},
+			Action{Name: "resume", Key: "U", Description: "Resume job execution", Destructive: true},
+			Action{Name: "logs", Key: "l", Description: "Open merged job logs"},
+		)
+	case "CronJob":
+		return append(common,
+			Action{Name: "suspend", Key: "u", Description: "Suspend future schedules", Destructive: true},
+			Action{Name: "resume", Key: "U", Description: "Resume future schedules", Destructive: true},
+		)
 	case "Pod":
 		return append(common,
 			Action{Name: "exec", Key: "x", Description: "Exec into pod", Destructive: true},
+			Action{Name: "attach", Key: "A", Description: "Attach to the running container", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open pod logs"},
 			Action{Name: "port-forward", Key: "f", Description: "Forward a pod port", Destructive: true},
 		)

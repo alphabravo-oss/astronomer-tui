@@ -19,15 +19,19 @@ func TestContainerSelectionAndTargets(t *testing.T) {
 		},
 	}
 	names := ContainerNames(pod)
-	if len(names) != 3 || names[0] != "init" || names[2] != "sidecar" {
+	if len(names) != 3 || names[0] != "app" || names[2] != "init" {
 		t.Fatalf("unexpected names %#v", names)
 	}
 	if hint := ContainerPickerHint(pod); hint == "" {
 		t.Fatal("expected picker hint for multi-container pod")
 	}
 	targets := TargetsForPods([]corev1.Pod{pod})
-	if len(targets) != 1 || targets[0].Container != "init" {
+	if len(targets) != 1 || targets[0].Container != "app" {
 		t.Fatalf("unexpected targets %#v", targets)
+	}
+	allTargets := TargetsForPodsAllContainers([]corev1.Pod{pod})
+	if len(allTargets) != 3 || allTargets[0].Container != "app" || allTargets[2].Container != "init" {
+		t.Fatalf("unexpected all-container targets %#v", allTargets)
 	}
 }
 

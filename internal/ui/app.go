@@ -48,6 +48,7 @@ type Options struct {
 	ClientFactory   func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
 	Editor          actions.Editor
 	ExecRunner      func(context.Context, actions.ExecTarget) error
+	AttachRunner    func(context.Context, actions.AttachTarget) error
 	PortForwards    *actions.PortForwardManager
 	PortForwardRun  func(context.Context, actions.PortForwardSpec) error
 	AIProvider      ai.LLMProvider
@@ -121,8 +122,32 @@ func (a *App) Run(ctx context.Context) error {
 			a.safe(a.showFailureAI)
 			return nil
 		}
+		if event.Rune() == 'H' {
+			a.safe(a.showHealth)
+			return nil
+		}
 		if event.Key() == tcell.KeyEnter {
+			a.safe(a.showDescribe)
+			return nil
+		}
+		if event.Rune() == 'y' {
 			a.safe(a.showDetail)
+			return nil
+		}
+		if event.Rune() == 'v' {
+			a.safe(a.showEventsForSelected)
+			return nil
+		}
+		if event.Rune() == 'o' {
+			a.safe(a.showOwnerForSelected)
+			return nil
+		}
+		if event.Rune() == 'g' {
+			a.safe(a.showRelatedForSelected)
+			return nil
+		}
+		if event.Rune() == 'z' {
+			a.safe(a.showResourceGraph)
 			return nil
 		}
 		if event.Rune() == '/' {
@@ -145,8 +170,16 @@ func (a *App) Run(ctx context.Context) error {
 			a.safe(a.showLogsPlan)
 			return nil
 		}
+		if event.Rune() == 'L' {
+			a.safe(a.showLogOptionsPlan)
+			return nil
+		}
 		if event.Rune() == 'x' {
 			a.safe(a.showExecPlan)
+			return nil
+		}
+		if event.Rune() == 'A' {
+			a.safe(a.showAttachPlan)
 			return nil
 		}
 		if event.Rune() == 'f' {
@@ -159,6 +192,14 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		if event.Rune() == 'r' {
 			a.safe(a.showRestart)
+			return nil
+		}
+		if event.Rune() == 'u' {
+			a.safe(func() { a.showSuspendToggle(true) })
+			return nil
+		}
+		if event.Rune() == 'U' {
+			a.safe(func() { a.showSuspendToggle(false) })
 			return nil
 		}
 		if col, ok := sortColumnFromRune(event.Rune()); ok {
@@ -574,6 +615,9 @@ func (a *App) showCommand(ctx context.Context) {
 			case "auth-summary":
 				a.showAuthSummary()
 				return
+			case "health":
+				a.showHealth()
+				return
 			}
 		}
 		a.app.SetRoot(a.table, true)
@@ -719,6 +763,42 @@ func (a *App) showAuthSummary() {
 		lines = append(lines, "Unknown: "+strings.Join(unknown, ", "))
 	}
 	a.showMessage("Identity and RBAC", strings.Join(lines, "\n"))
+}
+
+func (a *App) showHealth() {
+	a.mu.RLock()
+	client := a.options.Client
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage("Cluster health", "Kubernetes client is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.context(), 12*time.Second)
+	defer cancel()
+	snapshot, err := cluster.ClusterHealth(ctx, client, client.Namespace)
+	if err != nil {
+		a.showMessage("Cluster health", err.Error())
+		return
+	}
+	lines := []string{
+		fmt.Sprintf("Nodes       %d/%d Ready", snapshot.NodesReady, snapshot.NodesTotal),
+		fmt.Sprintf("Workloads   %d/%d Ready", snapshot.WorkloadsReady, snapshot.WorkloadsTotal),
+		fmt.Sprintf("Pods        %d total  %d running  %d succeeded  %d pending  %d failed", snapshot.PodsTotal, snapshot.PodsRunning, snapshot.PodsSucceeded, snapshot.PodsPending, snapshot.PodsFailed),
+		fmt.Sprintf("Restarts    %d", snapshot.ContainerRestarts),
+		fmt.Sprintf("Warnings    %d recent events", snapshot.WarningEvents),
+		"",
+		"Problems",
+	}
+	if len(snapshot.Problems) == 0 {
+		lines = append(lines, "No detected problems.")
+	}
+	for _, problem := range snapshot.Problems {
+		lines = append(lines, fmt.Sprintf("%-8s %-48s %s", strings.ToUpper(problem.Severity), problem.Resource, problem.Message))
+	}
+	if len(snapshot.Errors) > 0 {
+		lines = append(lines, "", "Unavailable checks", strings.Join(snapshot.Errors, "\n"))
+	}
+	a.showScrollableText(" Cluster health ", strings.Join(lines, "\n"))
 }
 
 func resolveSkin(options Options) uitheme.Skin {
@@ -950,12 +1030,37 @@ func (a *App) showRestart() {
 	a.runAction(req, "Restarted", "Restart failed")
 }
 
+func (a *App) showSuspendToggle(suspend bool) {
+	obj := a.selectedObject()
+	if obj == nil || a.renderer == nil {
+		return
+	}
+	name := "resume"
+	if suspend {
+		name = "suspend"
+	}
+	req := a.boundActionRequest(name, a.renderer.GVR(), obj)
+	if req.Kind != "Job" && req.Kind != "CronJob" {
+		a.showMessage("Action unavailable", fmt.Sprintf("%s is implemented for Job and CronJob", name))
+		return
+	}
+	successTitle := "Resumed"
+	if suspend {
+		successTitle = "Suspended"
+	}
+	if safety.RequiresConfirmation(a.options.Config, a.currentContext(), safety.Patch) {
+		a.showTypedAction(req, safety.Patch, successTitle, name+" failed")
+		return
+	}
+	a.runAction(req, successTitle, name+" failed")
+}
+
 func scalableKind(kind string) bool {
 	return kind == "Deployment" || kind == "StatefulSet"
 }
 
 func restartableKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet"
+	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet"
 }
 
 func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitle, failureTitle string) {
@@ -1122,6 +1227,22 @@ func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 			a.showManifestAIForObject(view, detail.Body, obj)
 			return nil
 		}
+		if event.Rune() == 'v' {
+			a.showEventsForSelected()
+			return nil
+		}
+		if event.Rune() == 'o' {
+			a.showOwnerForSelected()
+			return nil
+		}
+		if event.Rune() == 'g' {
+			a.showRelatedForSelected()
+			return nil
+		}
+		if event.Rune() == 'z' {
+			a.showResourceGraph()
+			return nil
+		}
 		return event
 	})
 	a.app.SetRoot(view, true)
@@ -1166,6 +1287,9 @@ func HelpText(catalog []actions.Action) string {
 	lines = append(lines, "Ctrl+P  palette - Search resources, actions, contexts, namespaces, plugins")
 	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
 	lines = append(lines, ":auth  identity - Show active server identity and RBAC verbs for the current resource")
+	lines = append(lines, ":health  pulses - Show bounded cluster health and problem summary")
+	lines = append(lines, "y/v/o/g/z  navigation - YAML, events, owner, related resources, and xray graph")
+	lines = append(lines, "L  advanced logs - Configure tail, since, previous, timestamps, and follow")
 	lines = append(lines, "/  filter - Filter visible rows")
 	lines = append(lines, "Shift+1..9  sort - Sort by column")
 	lines = append(lines, "?  help - Show this overlay")

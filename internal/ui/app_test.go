@@ -336,6 +336,44 @@ func TestDiscoveryAliasesAndVerbsDriveAvailableActions(t *testing.T) {
 	}
 }
 
+func TestRelatedTargetsForDeployment(t *testing.T) {
+	app := New(Options{})
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "web", "namespace": "default"},
+		"spec": map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"app": "web", "tier": "api"}}},
+	}}
+	targets := app.relatedTargets(obj)
+	if len(targets) != 2 || targets[0].GVR.Resource != "replicasets" || targets[1].GVR.Resource != "pods" || targets[1].Filter != "app=web,tier=api" {
+		t.Fatalf("unexpected related targets %#v", targets)
+	}
+}
+
+func TestDescribeTextIncludesSummaryAndOwners(t *testing.T) {
+	controller := true
+	obj := podObject("api", "default")
+	obj.SetAPIVersion("v1")
+	obj.SetKind("Pod")
+	obj.SetOwnerReferences([]metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-123", Controller: &controller}})
+	text := describeText(obj, views.GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}})
+	if !strings.Contains(text, "Pod") || !strings.Contains(text, "ReplicaSet/api-123") || !strings.Contains(text, "Summary") {
+		t.Fatalf("unexpected describe text %q", text)
+	}
+}
+
+func TestLogEntryPodRemovesContainerSuffix(t *testing.T) {
+	if got := logEntryPod("api/sidecar"); got != "api" {
+		t.Fatalf("unexpected pod name %q", got)
+	}
+}
+
+func TestControllerOwnerPrefersControllerReference(t *testing.T) {
+	controller, other := true, false
+	owner, ok := controllerOwner([]metav1.OwnerReference{{Name: "ignored", Controller: &other}, {Name: "web", Kind: "Deployment", Controller: &controller}})
+	if !ok || owner.Name != "web" {
+		t.Fatalf("unexpected controller owner %#v %v", owner, ok)
+	}
+}
+
 func TestDiscoverCRDRendererUsesPrinterColumns(t *testing.T) {
 	crdGVR := schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
 	crd := &unstructured.Unstructured{Object: map[string]any{
