@@ -90,6 +90,16 @@ func (e Executor) Run(ctx context.Context, req Request) (Result, error) {
 			return Result{}, err
 		}
 		return Result{Message: fmt.Sprintf("restarted %s/%s", req.Kind, req.ResourceName)}, nil
+	case "suspend", "resume":
+		suspend := req.Name == "suspend"
+		if err := e.patchSuspend(ctx, req, suspend); err != nil {
+			return Result{}, err
+		}
+		pastTense := "resumed"
+		if suspend {
+			pastTense = "suspended"
+		}
+		return Result{Message: fmt.Sprintf("%s %s/%s", pastTense, req.Kind, req.ResourceName)}, nil
 	default:
 		return Result{}, fmt.Errorf("unknown action %q", req.Name)
 	}
@@ -122,6 +132,13 @@ func (e Executor) Preview(ctx context.Context, req Request) (Preview, error) {
 			return Preview{}, err
 		}
 		return Preview{Summary: fmt.Sprintf("Dry-run: restart %s/%s", req.Kind, req.ResourceName), Patch: string(patch)}, nil
+	case "suspend", "resume":
+		suspend := req.Name == "suspend"
+		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"resourceVersion": req.Target.ResourceVersion}, "spec": map[string]any{"suspend": suspend}})
+		if err := PatchResourceDryRun(ctx, e.Dynamic, req.GVR, req.Namespace, req.ResourceName, patch); err != nil {
+			return Preview{}, err
+		}
+		return Preview{Summary: fmt.Sprintf("Dry-run: %s %s/%s", req.Name, req.Kind, req.ResourceName), Patch: string(patch)}, nil
 	default:
 		return Preview{}, fmt.Errorf("preview is not implemented for %q", req.Name)
 	}
@@ -213,6 +230,15 @@ func (e Executor) restartWorkload(ctx context.Context, req Request) error {
 	}
 }
 
+func (e Executor) patchSuspend(ctx context.Context, req Request, suspend bool) error {
+	if req.Kind != "Job" && req.Kind != "CronJob" {
+		return fmt.Errorf("%s is not implemented for %s", req.Name, req.Kind)
+	}
+	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"resourceVersion": req.Target.ResourceVersion}, "spec": map[string]any{"suspend": suspend}})
+	_, err := PatchResource(ctx, e.Dynamic, req.GVR, req.Namespace, req.ResourceName, patch)
+	return err
+}
+
 func safetyVerb(action string) safety.Verb {
 	switch action {
 	case "delete":
@@ -223,6 +249,8 @@ func safetyVerb(action string) safety.Verb {
 		return safety.Restart
 	case "edit":
 		return safety.Edit
+	case "suspend", "resume":
+		return safety.Patch
 	default:
 		return safety.Verb(action)
 	}

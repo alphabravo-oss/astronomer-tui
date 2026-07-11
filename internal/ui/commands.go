@@ -35,6 +35,11 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "auth-summary"}, true
+	case "health", "pulses":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "health"}, true
 	default:
 		return Command{Kind: "resource", Value: parts[0]}, true
 	}

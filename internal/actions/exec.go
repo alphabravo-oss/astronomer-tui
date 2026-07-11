@@ -23,6 +23,12 @@ type ExecTarget struct {
 	Command   []string
 }
 
+type AttachTarget struct {
+	Namespace string
+	Pod       string
+	Container string
+}
+
 func ExecTargets(pod corev1.Pod, preferredContainer string) ([]ExecTarget, error) {
 	container, ok := pickContainer(pod, preferredContainer)
 	if !ok {
@@ -88,4 +94,30 @@ func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface,
 		Stderr: stderr,
 		Tty:    stdin != nil,
 	})
+}
+
+func RunAttach(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, target AttachTarget, stdin io.Reader, stdout, stderr io.Writer) error {
+	if cfg == nil {
+		return fmt.Errorf("rest config is required for attach")
+	}
+	if client == nil {
+		return fmt.Errorf("kubernetes client is required for attach")
+	}
+	request := client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(target.Pod).
+		Namespace(target.Namespace).
+		SubResource("attach").
+		VersionedParams(&corev1.PodAttachOptions{
+			Container: target.Container,
+			Stdin:     stdin != nil,
+			Stdout:    stdout != nil,
+			Stderr:    stderr != nil,
+			TTY:       stdin != nil,
+		}, scheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(cfg, http.MethodPost, request.URL())
+	if err != nil {
+		return err
+	}
+	return executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: stdin, Stdout: stdout, Stderr: stderr, Tty: stdin != nil})
 }

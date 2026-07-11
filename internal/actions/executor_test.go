@@ -200,6 +200,34 @@ func TestExecutorDeletePreviewUsesServerDryRun(t *testing.T) {
 	}
 }
 
+func TestExecutorSuspendsImmutableJob(t *testing.T) {
+	gvr := schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}
+	obj := namedUnstructured("Job", "backup", "default", "uid-job", "4")
+	obj.SetAPIVersion("batch/v1")
+	obj.Object["spec"] = map[string]any{"suspend": false}
+	executor := Executor{
+		Dynamic: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj), Config: config.Default(),
+		CurrentContext: "dev", RequireTarget: true,
+	}
+	result, err := executor.Run(context.Background(), Request{Name: "suspend", Target: Target{
+		Context: "dev", GVR: gvr, Kind: "Job", Namespace: "default", Name: "backup", UID: "uid-job", ResourceVersion: "4",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Message != "suspended Job/backup" {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	updated, err := executor.Dynamic.Resource(gvr).Namespace("default").Get(context.Background(), "backup", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	suspended, _, _ := unstructured.NestedBool(updated.Object, "spec", "suspend")
+	if !suspended {
+		t.Fatalf("expected suspended job %#v", updated.Object)
+	}
+}
+
 func namedUnstructured(kind, name, namespace string, uid types.UID, resourceVersion string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion("v1")

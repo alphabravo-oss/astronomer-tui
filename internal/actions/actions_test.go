@@ -45,6 +45,20 @@ func TestCatalogForWorkload(t *testing.T) {
 	if !restart || !servicePF || !podExec || !commonDelete {
 		t.Fatalf("unexpected catalog coverage restart=%v servicePF=%v podExec=%v commonDelete=%v", restart, servicePF, podExec, commonDelete)
 	}
+	for kind, expected := range map[string][]string{
+		"DaemonSet": {"restart", "logs"}, "Job": {"suspend", "resume", "logs"}, "CronJob": {"suspend", "resume"},
+	} {
+		catalog := CatalogFor(kind)
+		for _, name := range expected {
+			var found bool
+			for _, action := range catalog {
+				found = found || action.Name == name
+			}
+			if !found {
+				t.Fatalf("%s catalog missing %s: %#v", kind, name, catalog)
+			}
+		}
+	}
 }
 
 func TestDefaultEditorUsesEnv(t *testing.T) {
