@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -27,6 +28,9 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 	if err := os.MkdirAll(dstDir, 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(dstDir, 0o700); err != nil {
+		return nil, err
+	}
 	results := make([]ImportResult, 0, len(mapping))
 	for _, file := range mapping {
 		src := filepath.Join(srcDir, file.src)
@@ -39,7 +43,10 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 			}
 			return nil, err
 		}
-		if _, err := os.Stat(dst); err == nil {
+		if info, err := os.Lstat(dst); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("refusing symlink import destination %q", dst)
+			}
 			existing, readErr := os.ReadFile(dst) // #nosec G304 -- import destination is an explicit user-selected directory.
 			if readErr != nil {
 				return nil, readErr
@@ -51,7 +58,17 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 			results = append(results, ImportResult{File: file.src, Status: status})
 			continue
 		}
-		if err := os.WriteFile(dst, data, 0o600); err != nil { // #nosec G304,G703 -- import destination is an explicit user-selected directory.
+		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- fixed basename under explicit destination.
+		if err != nil {
+			return nil, err
+		}
+		if _, err := out.Write(data); err != nil {
+			_ = out.Close()
+			_ = os.Remove(dst)
+			return nil, err
+		}
+		if err := out.Close(); err != nil {
+			_ = os.Remove(dst)
 			return nil, err
 		}
 		results = append(results, ImportResult{File: file.src, Status: "imported"})

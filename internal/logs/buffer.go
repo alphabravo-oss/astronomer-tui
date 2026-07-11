@@ -4,11 +4,17 @@ package logs
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	DefaultMaxBytes = 16 << 20
+	MaxLineBytes    = 64 << 10
 )
 
 type Entry struct {
@@ -20,19 +26,34 @@ type Entry struct {
 }
 
 type Buffer struct {
-	mu      sync.RWMutex
-	limit   int
-	entries []Entry
+	mu       sync.RWMutex
+	limit    int
+	maxBytes int
+	bytes    int
+	entries  []Entry
 }
 
 func NewBuffer(limit int) *Buffer {
 	if limit <= 0 {
 		limit = 10_000
 	}
-	return &Buffer{limit: limit}
+	return NewBufferWithByteLimit(limit, DefaultMaxBytes)
+}
+
+func NewBufferWithByteLimit(limit, maxBytes int) *Buffer {
+	if limit <= 0 {
+		limit = 10_000
+	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBytes
+	}
+	return &Buffer{limit: limit, maxBytes: maxBytes}
 }
 
 func (b *Buffer) Append(pod, line string, ts time.Time) {
+	if len(line) > MaxLineBytes {
+		line = line[:MaxLineBytes] + "…[truncated]"
+	}
 	if ts.IsZero() {
 		ts = time.Now()
 	}
@@ -46,10 +67,20 @@ func (b *Buffer) Append(pod, line string, ts time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.entries = append(b.entries, entry)
-	if overflow := len(b.entries) - b.limit; overflow > 0 {
-		copy(b.entries, b.entries[overflow:])
-		b.entries = b.entries[:b.limit]
+	b.bytes += entrySize(entry)
+	for len(b.entries) > b.limit || b.bytes > b.maxBytes {
+		b.bytes -= entrySize(b.entries[0])
+		b.entries[0] = Entry{}
+		b.entries = b.entries[1:]
 	}
+}
+
+func entrySize(entry Entry) int {
+	size := len(entry.Pod) + len(entry.Line) + len(entry.Parse.Raw)
+	for key, value := range entry.Parse.Fields {
+		size += len(key) + len(value)
+	}
+	return size
 }
 
 func (b *Buffer) Entries() []Entry {
@@ -110,7 +141,33 @@ func (b *Buffer) Save(path, filterExpr string) error {
 	for _, entry := range entries {
 		lines = append(lines, FormatEntry(entry, true))
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600) // #nosec G304 -- save path is explicitly user-selected.
+	return atomicPrivateWrite(path, []byte(strings.Join(lines, "\n")))
+}
+
+func atomicPrivateWrite(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".astrotui-logs-*") // #nosec G304 -- directory is explicitly user-selected.
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 func FormatEntry(entry Entry, prefixPod bool) string {

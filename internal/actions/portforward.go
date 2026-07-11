@@ -21,20 +21,22 @@ import (
 )
 
 type PortForward struct {
-	ID        string
-	Local     int
-	Resource  string
-	Remote    int
-	Since     time.Time
-	Namespace string
-	stop      func()
+	ID         string
+	Local      int
+	Resource   string
+	Remote     int
+	RemoteName string
+	Since      time.Time
+	Namespace  string
+	stop       func()
 }
 
 type PortForwardSpec struct {
-	Namespace string
-	Resource  string
-	Local     int
-	Remote    int
+	Namespace  string
+	Resource   string
+	Local      int
+	Remote     int
+	RemoteName string
 }
 
 type PortForwardManager struct {
@@ -48,12 +50,13 @@ func NewPortForwardManager() *PortForwardManager {
 
 func NewPortForward(spec PortForwardSpec, stop func()) PortForward {
 	return PortForward{
-		ID:        spec.ID(),
-		Local:     spec.Local,
-		Remote:    spec.Remote,
-		Resource:  spec.Resource,
-		Namespace: spec.Namespace,
-		stop:      stop,
+		ID:         spec.ID(),
+		Local:      spec.Local,
+		Remote:     spec.Remote,
+		RemoteName: spec.RemoteName,
+		Resource:   spec.Resource,
+		Namespace:  spec.Namespace,
+		stop:       stop,
 	}
 }
 
@@ -117,21 +120,30 @@ func DefaultServiceForwards(service corev1.Service) []PortForwardSpec {
 	specs := make([]PortForwardSpec, 0, len(service.Spec.Ports))
 	for _, port := range service.Spec.Ports {
 		remote := int(port.TargetPort.IntVal)
-		if remote == 0 {
+		remoteName := port.TargetPort.StrVal
+		if remote == 0 && remoteName == "" {
 			remote = int(port.Port)
 		}
 		specs = append(specs, PortForwardSpec{
-			Namespace: service.Namespace,
-			Resource:  "service/" + service.Name,
-			Local:     int(port.Port),
-			Remote:    remote,
+			Namespace:  service.Namespace,
+			Resource:   "service/" + service.Name,
+			Local:      int(port.Port),
+			Remote:     remote,
+			RemoteName: remoteName,
 		})
 	}
 	return specs
 }
 
 func (p PortForwardSpec) ID() string {
-	return fmt.Sprintf("%s:%s:%d:%d", p.Namespace, p.Resource, p.Local, p.Remote)
+	return fmt.Sprintf("%s:%s:%d:%s", p.Namespace, p.Resource, p.Local, p.RemoteTarget())
+}
+
+func (p PortForwardSpec) RemoteTarget() string {
+	if p.RemoteName != "" {
+		return p.RemoteName
+	}
+	return fmt.Sprint(p.Remote)
 }
 
 func ResolvePortForwardSpec(ctx context.Context, client kubernetes.Interface, spec PortForwardSpec) (PortForwardSpec, error) {
@@ -162,8 +174,27 @@ func ResolvePortForwardSpec(ctx context.Context, client kubernetes.Interface, sp
 	sort.SliceStable(pods.Items, func(i, j int) bool {
 		return pods.Items[i].Name < pods.Items[j].Name
 	})
+	if spec.RemoteName != "" {
+		remote, ok := namedContainerPort(pods.Items[0], spec.RemoteName)
+		if !ok {
+			return PortForwardSpec{}, fmt.Errorf("pod %s has no container port named %q", pods.Items[0].Name, spec.RemoteName)
+		}
+		spec.Remote = remote
+		spec.RemoteName = ""
+	}
 	spec.Resource = "pod/" + pods.Items[0].Name
 	return spec, nil
+}
+
+func namedContainerPort(pod corev1.Pod, name string) (int, bool) {
+	for _, container := range pod.Spec.Containers {
+		for _, port := range container.Ports {
+			if port.Name == name && port.ContainerPort > 0 {
+				return int(port.ContainerPort), true
+			}
+		}
+	}
+	return 0, false
 }
 
 func RunPortForward(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, spec PortForwardSpec, out, errOut io.Writer) error {

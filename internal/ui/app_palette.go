@@ -9,6 +9,7 @@ import (
 	"github.com/alphabravo-oss/astrotui/internal/ai"
 	"github.com/alphabravo-oss/astrotui/internal/palette"
 	"github.com/alphabravo-oss/astrotui/internal/plugins"
+	"github.com/alphabravo-oss/astrotui/internal/safety"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -105,7 +106,7 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 			if !ok {
 				return false
 			}
-			return a.switchResource(context.Background(), gvr)
+			return a.switchResource(a.context(), gvr)
 		}
 		if obj, ok := entry.Payload.(*unstructured.Unstructured); ok {
 			a.showDetailFor(obj)
@@ -118,7 +119,7 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 		}
 	case palette.Contexts:
 		if strings.HasPrefix(entry.ID, "context:") {
-			return a.switchContext(context.Background(), strings.TrimPrefix(entry.ID, "context:"))
+			return a.switchContext(a.context(), strings.TrimPrefix(entry.ID, "context:"))
 		}
 	case palette.Actions:
 		return a.executeActionEntry(entry)
@@ -164,13 +165,28 @@ func (a *App) executeAIEntry(entry palette.Entry) bool {
 	}
 	if actionName, ok := parseAIActionCall(resp.Text); ok {
 		if a.actionAvailable(actionName) {
-			return a.executeActionEntry(palette.Entry{ID: "action:" + actionName, Title: actionName, Category: palette.Actions})
+			a.showAIActionConfirm(actionName)
+			return true
 		}
 		a.showMessage("AI action unavailable", fmt.Sprintf("%q is not available for the current selection", actionName))
 		return true
 	}
 	a.showMessage("AI", resp.Text)
 	return true
+}
+
+func (a *App) showAIActionConfirm(actionName string) {
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("AI suggested %q. Review the selected resource, then explicitly approve this action.", actionName)).
+		AddButtons([]string{"Approve", "Cancel"}).
+		SetDoneFunc(func(index int, _ string) {
+			if index == 0 {
+				a.executeActionEntry(palette.Entry{ID: "action:" + actionName, Title: actionName, Category: palette.Actions})
+				return
+			}
+			a.app.SetRoot(a.table, true)
+		})
+	a.app.SetRoot(modal, false)
 }
 
 func (a *App) executeActionEntry(entry palette.Entry) bool {
@@ -204,12 +220,44 @@ func (a *App) executePluginEntry(entry palette.Entry) bool {
 		return false
 	}
 	plan := plugins.Plan(plugin, a.pluginVars())
-	if plan.Confirm {
-		a.showPluginConfirm(entry.Title, plan)
+	currentContext := a.currentContext()
+	if safety.RequiresConfirmation(a.options.Config, currentContext, safety.Plugin) {
+		input := tview.NewInputField().
+			SetLabel(fmt.Sprintf("Type %s to run plugin %s: ", currentContext, entry.Title)).
+			SetFieldWidth(40)
+		input.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				a.runAuthorizedPlugin(entry.Title, plan, input.GetText())
+				return
+			}
+			a.app.SetRoot(a.table, true)
+		})
+		a.app.SetRoot(input, true)
 		return true
 	}
-	a.runPluginPlan(entry.Title, plan)
+	return a.runAuthorizedPlugin(entry.Title, plan, "")
+}
+
+func (a *App) runAuthorizedPlugin(name string, plan plugins.CommandPlan, typed string) bool {
+	if err := safety.Authorize(a.options.Config, a.currentContext(), safety.Plugin, typed); err != nil {
+		a.showMessage("Plugin blocked", err.Error())
+		return true
+	}
+	if plan.Confirm {
+		a.showPluginConfirm(name, plan)
+		return true
+	}
+	a.runPluginPlan(name, plan)
 	return true
+}
+
+func (a *App) currentContext() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.options.Client == nil {
+		return ""
+	}
+	return a.options.Client.Context
 }
 
 func (a *App) showPluginConfirm(name string, plan plugins.CommandPlan) {

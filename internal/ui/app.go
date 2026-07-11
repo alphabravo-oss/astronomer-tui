@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 
 	"github.com/alphabravo-oss/astrotui/internal/actions"
 	"github.com/alphabravo-oss/astrotui/internal/ai"
@@ -64,6 +65,8 @@ type App struct {
 	sortDesc       bool
 	mu             sync.RWMutex
 	resourceCancel context.CancelFunc
+	cacheCancel    context.CancelFunc
+	runCtx         context.Context
 	crashes        CrashReporter
 	renderer       views.Renderer
 	pluginFile     plugins.File
@@ -86,8 +89,8 @@ func New(options Options) *App {
 
 func (a *App) Run(ctx context.Context) error {
 	gvr := initialResourceGVR(a.options.InitialState)
-	a.cache = cluster.NewResourceCache(a.options.Client.Dynamic, 30*time.Minute)
-	a.cache.Start(ctx)
+	a.runCtx = ctx
+	a.cache, a.cacheCancel = a.newCache(a.options.Client.Dynamic)
 	a.switchResource(ctx, gvr)
 	if a.options.InitialState.LastFilter != "" {
 		a.mu.Lock()
@@ -158,10 +161,30 @@ func (a *App) Run(ctx context.Context) error {
 	})
 	a.showSplash(ctx)
 	err := a.app.Run()
+	if a.cacheCancel != nil {
+		a.cacheCancel()
+	}
 	if a.options.SessionStore != nil {
 		_ = a.options.SessionStore.Save(a.sessionState())
 	}
 	return err
+}
+
+func (a *App) context() context.Context {
+	if a.runCtx != nil {
+		return a.runCtx
+	}
+	return context.Background()
+}
+
+func (a *App) newCache(client dynamic.Interface) (*cluster.ResourceCache, context.CancelFunc) {
+	cache := cluster.NewResourceCache(client, 30*time.Minute)
+	if a.runCtx == nil {
+		return cache, nil
+	}
+	cacheCtx, cancel := context.WithCancel(a.runCtx)
+	cache.Start(cacheCtx)
+	return cache, cancel
 }
 
 func initialResourceGVR(state session.State) schema.GroupVersionResource {
@@ -290,7 +313,7 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 		a.drawHeader(renderer)
 		for row, cells := range rows {
 			for col, cell := range cells {
-				a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
+				a.table.SetCell(row+1, col, tview.NewTableCell(tview.Escape(cell.Text)))
 			}
 		}
 		a.updateTitle()
@@ -430,11 +453,24 @@ func (a *App) switchNamespace(namespace string) {
 	if namespace == "" {
 		return
 	}
+	a.mu.Lock()
 	if a.options.Client == nil {
 		a.options.Client = &cluster.Client{}
 	}
 	a.options.Client.Namespace = namespace
-	a.renderCurrent()
+	gvr, renderer := a.currentGVR, a.renderer
+	cache, client := a.cache, a.options.Client
+	a.objects = nil
+	a.visibleObjects = nil
+	a.mu.Unlock()
+	a.table.Clear()
+	if renderer != nil {
+		a.drawHeader(renderer)
+	}
+	a.updateTitle()
+	if cache != nil && renderer != nil && gvr.Resource != "" {
+		a.refresh(cache, client, gvr, renderer)
+	}
 }
 
 func (a *App) switchContext(ctx context.Context, contextName string) bool {
@@ -451,8 +487,7 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 		a.showMessage("Context switch failed", err.Error())
 		return false
 	}
-	newCache := cluster.NewResourceCache(client.Dynamic, 30*time.Minute)
-	newCache.Start(ctx)
+	newCache, newCacheCancel := a.newCache(client.Dynamic)
 	a.mu.Lock()
 	if a.resourceCancel != nil {
 		a.resourceCancel()
@@ -460,12 +495,17 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	}
 	a.options.Client = client
 	a.cache = newCache
+	oldCacheCancel := a.cacheCancel
+	a.cacheCancel = newCacheCancel
 	gvr := a.currentGVR
 	a.mu.Unlock()
+	if oldCacheCancel != nil {
+		oldCacheCancel()
+	}
 	if gvr.Resource == "" {
 		gvr = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 	}
-	if !a.switchResource(ctx, gvr) {
+	if !a.switchResource(a.context(), gvr) {
 		return false
 	}
 	a.app.SetRoot(a.table, true)
@@ -736,7 +776,7 @@ func (a *App) renderCurrent() {
 	a.drawHeader(a.renderer)
 	for row, cells := range rows {
 		for col, cell := range cells {
-			a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
+			a.table.SetCell(row+1, col, tview.NewTableCell(tview.Escape(cell.Text)))
 		}
 	}
 	a.updateTitle()
@@ -752,7 +792,7 @@ func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 	}
 	detail := a.renderer.Detail(obj)
 	view := tview.NewTextView().
-		SetDynamicColors(true).
+		SetDynamicColors(false).
 		SetScrollable(true).
 		SetText(detail.Body)
 	view.SetTitle(" " + detail.Title + " ").SetBorder(true)
@@ -762,7 +802,7 @@ func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 			return nil
 		}
 		if event.Key() == tcell.KeyCtrlE || event.Rune() == 'a' {
-			a.showManifestAI(view, detail.Body)
+			a.showManifestAIForObject(view, detail.Body, obj)
 			return nil
 		}
 		return event

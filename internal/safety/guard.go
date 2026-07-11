@@ -12,12 +12,14 @@ import (
 type Verb string
 
 const (
-	Delete  Verb = "delete"
-	Scale   Verb = "scale"
-	Restart Verb = "restart"
-	Exec    Verb = "exec-into-prod-pod"
-	Edit    Verb = "edit"
-	Patch   Verb = "patch"
+	Delete      Verb = "delete"
+	Scale       Verb = "scale"
+	Restart     Verb = "restart"
+	Exec        Verb = "exec-into-prod-pod"
+	Edit        Verb = "edit"
+	Patch       Verb = "patch"
+	Plugin      Verb = "plugin"
+	PortForward Verb = "port-forward"
 )
 
 var ErrReadOnly = errors.New("context is read-only")
@@ -56,7 +58,7 @@ func Authorize(cfg config.Config, currentContext string, verb Verb, typed string
 
 func destructive(verb Verb) bool {
 	switch verb {
-	case Delete, Scale, Restart, Exec, Edit, Patch:
+	case Delete, Scale, Restart, Exec, Edit, Patch, Plugin, PortForward:
 		return true
 	default:
 		return false

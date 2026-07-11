@@ -98,6 +98,8 @@ func TestInstallScriptMatchesReleaseArtifacts(t *testing.T) {
 	for _, want := range []string{
 		"alphabravo-oss/astronomer-tui",
 		"astrotui_${OS}_${ARCH}.tar.gz",
+		"cosign verify-blob",
+		"checksums.txt",
 		"install -m 0755",
 	} {
 		if !strings.Contains(text, want) {
@@ -113,7 +115,7 @@ func TestREADMEHasInstallQuickstartAndScreenshot(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		"curl -fsSL https://raw.githubusercontent.com/alphabravo-oss/astronomer-tui/main/install.sh | sh",
+		"raw.githubusercontent.com/alphabravo-oss/astronomer-tui/${VERSION}/install.sh",
 		"./bin/astrotui --context kind-kind",
 		"ghcr.io/alphabravo-oss/astrotui:<version>",
 		"docs/screenshots/astrotui-main.svg",

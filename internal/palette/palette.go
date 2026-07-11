@@ -43,6 +43,9 @@ func (i *Index) Replace(entries []Entry) {
 }
 
 func (i *Index) Search(query string, limit int) []Match {
+	if limit <= 0 {
+		limit = 50
+	}
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
 		out := make([]Match, 0, min(limit, len(i.entries)))
@@ -59,19 +62,33 @@ func (i *Index) Search(query string, limit int) []Match {
 		haystack := strings.ToLower(entry.Title + " " + entry.Description + " " + string(entry.Category))
 		score, ok := fuzzyScore(query, haystack)
 		if ok {
-			matches = append(matches, Match{Entry: entry, Score: score})
+			candidate := Match{Entry: entry, Score: score}
+			if len(matches) < limit {
+				matches = append(matches, candidate)
+				continue
+			}
+			worst := 0
+			for idx := 1; idx < len(matches); idx++ {
+				if better(matches[worst], matches[idx]) {
+					worst = idx
+				}
+			}
+			if better(candidate, matches[worst]) {
+				matches[worst] = candidate
+			}
 		}
 	}
 	sort.SliceStable(matches, func(a, b int) bool {
-		if matches[a].Score == matches[b].Score {
-			return matches[a].Entry.Title < matches[b].Entry.Title
-		}
-		return matches[a].Score > matches[b].Score
+		return better(matches[a], matches[b])
 	})
-	if limit > 0 && len(matches) > limit {
-		matches = matches[:limit]
-	}
 	return matches
+}
+
+func better(a, b Match) bool {
+	if a.Score == b.Score {
+		return a.Entry.Title < b.Entry.Title
+	}
+	return a.Score > b.Score
 }
 
 func fuzzyScore(needle, haystack string) (int, bool) {

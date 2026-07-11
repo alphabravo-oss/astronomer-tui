@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -77,6 +78,9 @@ func NewProvider(cfg config.AIConfig) (LLMProvider, error) {
 	}
 	if cfg.Provider == "" {
 		return nil, fmt.Errorf("ai.provider is required when ai.enabled is true")
+	}
+	if err := config.ValidateAIEndpoint(cfg.Endpoint); err != nil {
+		return nil, err
 	}
 	model := cfg.Model
 	if model == "" {
@@ -476,7 +480,19 @@ func (h HTTPProvider) httpClient() *http.Client {
 	if h.Client != nil {
 		return h.Client
 	}
-	return &http.Client{Timeout: 60 * time.Second}
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 || sameOrigin(via[0].URL, req.URL) {
+				return nil
+			}
+			return fmt.Errorf("refusing cross-origin LLM redirect to %s", req.URL.Redacted())
+		},
+	}
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 func promptWithContext(req Request) string {

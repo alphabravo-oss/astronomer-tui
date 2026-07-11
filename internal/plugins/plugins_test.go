@@ -44,3 +44,10 @@ func TestLoadMergedAndPlan(t *testing.T) {
 		t.Fatal("expected executable command")
 	}
 }
+
+func TestPlanNeverExpandsExecutable(t *testing.T) {
+	plan := Plan(Plugin{Command: "$NAME", Args: []string{"$NAME"}}, map[string]string{"NAME": "api"})
+	if plan.Command != "$NAME" || len(plan.Args) != 1 || plan.Args[0] != "api" {
+		t.Fatalf("unexpected plan %#v", plan)
+	}
+}

@@ -42,10 +42,10 @@ func CatalogFor(kind string) []Action {
 		return append(common,
 			Action{Name: "exec", Key: "x", Description: "Exec into pod", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open pod logs"},
-			Action{Name: "port-forward", Key: "f", Description: "Forward a pod port"},
+			Action{Name: "port-forward", Key: "f", Description: "Forward a pod port", Destructive: true},
 		)
 	case "Service":
-		return append(common, Action{Name: "port-forward", Key: "f", Description: "Forward a service port"})
+		return append(common, Action{Name: "port-forward", Key: "f", Description: "Forward a service port", Destructive: true})
 	default:
 		return common
 	}
@@ -148,6 +148,18 @@ func strategicMergePatch(originalJSON, editedJSON []byte) ([]byte, error) {
 		return nil, err
 	}
 	patch := diffMap(original, edited)
+	if len(patch) > 0 {
+		if metadata, ok := original["metadata"].(map[string]any); ok {
+			if resourceVersion, ok := metadata["resourceVersion"].(string); ok && resourceVersion != "" {
+				patchMetadata, _ := patch["metadata"].(map[string]any)
+				if patchMetadata == nil {
+					patchMetadata = map[string]any{}
+				}
+				patchMetadata["resourceVersion"] = resourceVersion
+				patch["metadata"] = patchMetadata
+			}
+		}
+	}
 	return json.Marshal(patch)
 }
 

@@ -64,7 +64,9 @@ func Plan(plugin Plugin, vars map[string]string) CommandPlan {
 		args[i] = expand(arg, vars)
 	}
 	return CommandPlan{
-		Command:    expand(plugin.Command, vars),
+		// The executable is trusted configuration. Expanding cluster-derived
+		// values here would allow a resource name to select a PATH executable.
+		Command:    plugin.Command,
 		Args:       args,
 		Background: plugin.Background,
 		Confirm:    plugin.Confirm,

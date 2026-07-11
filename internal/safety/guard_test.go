@@ -26,3 +26,13 @@ func TestReadOnlyPolicyBlocksDestructive(t *testing.T) {
 		t.Fatalf("expected ErrReadOnly, got %v", err)
 	}
 }
+
+func TestReadOnlyBlocksPluginsAndPortForward(t *testing.T) {
+	cfg := config.Default()
+	cfg.Contexts = map[string]config.ContextConfig{"prod": {Policy: "read-only"}}
+	for _, verb := range []Verb{Plugin, PortForward} {
+		if err := Authorize(cfg, "prod", verb, "prod"); err != ErrReadOnly {
+			t.Fatalf("expected %s to be blocked, got %v", verb, err)
+		}
+	}
+}

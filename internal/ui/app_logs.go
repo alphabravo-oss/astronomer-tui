@@ -325,7 +325,7 @@ func (a *App) showLogAIChat(logView *tview.TextView, buffer *logs.Buffer, filter
 		logView.SetText("No log lines available for AI.")
 		return
 	}
-	output := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetText("Ask a follow-up about these logs.")
+	output := tview.NewTextView().SetDynamicColors(false).SetScrollable(true).SetText("Ask a follow-up about these logs.")
 	output.SetTitle(" AI logs ").SetBorder(true)
 	input := tview.NewInputField().SetLabel("Ask: ").SetFieldWidth(0)
 	input.SetDoneFunc(func(key tcell.Key) {
@@ -379,9 +379,9 @@ func renderLogEntries(entries []logs.Entry, prefixPod bool) string {
 
 func formatLogEntryForView(entry logs.Entry, prefixPod bool) string {
 	if !prefixPod || entry.Pod == "" {
-		return logs.FormatEntry(entry, prefixPod)
+		return tview.Escape(logs.FormatEntry(entry, prefixPod))
 	}
-	colored := fmt.Sprintf("[%s]%s[-]", logColor(entry.Color), logs.PrefixPod(entry.Pod, entry.Line))
+	colored := fmt.Sprintf("[%s]%s[-]", logColor(entry.Color), tview.Escape(logs.PrefixPod(entry.Pod, entry.Line)))
 	if !entry.Time.IsZero() {
 		return fmt.Sprintf("%s %s", entry.Time.Format(time.RFC3339), colored)
 	}
@@ -404,10 +404,11 @@ func logSummaryContext(entries []logs.Entry, limit int) string {
 }
 
 type logLineWriter struct {
-	pod      string
-	buffer   *logs.Buffer
-	onAppend func()
-	pending  string
+	pod        string
+	buffer     *logs.Buffer
+	onAppend   func()
+	pending    string
+	lastNotify time.Time
 }
 
 type logSearchState struct {
@@ -444,6 +445,11 @@ func newLogLineWriter(pod string, buffer *logs.Buffer, onAppend func()) *logLine
 
 func (w *logLineWriter) Write(data []byte) (int, error) {
 	w.pending += string(data)
+	if len(w.pending) > logs.MaxLineBytes {
+		w.buffer.Append(w.pod, w.pending[:logs.MaxLineBytes]+"…[truncated]", time.Now())
+		w.pending = ""
+		w.notify()
+	}
 	scanner := bufio.NewScanner(strings.NewReader(w.pending))
 	var lines []string
 	for scanner.Scan() {
@@ -457,11 +463,19 @@ func (w *logLineWriter) Write(data []byte) (int, error) {
 	}
 	for _, line := range lines {
 		w.buffer.Append(w.pod, line, time.Now())
-		if w.onAppend != nil {
-			w.onAppend()
-		}
+	}
+	if len(lines) > 0 {
+		w.notify()
 	}
 	return len(data), scanner.Err()
+}
+
+func (w *logLineWriter) notify() {
+	if w.onAppend == nil || time.Since(w.lastNotify) < 50*time.Millisecond {
+		return
+	}
+	w.lastNotify = time.Now()
+	w.onAppend()
 }
 
 func (a *App) selectedLogTargets(ctx context.Context) ([]logs.PodLogTarget, error) {

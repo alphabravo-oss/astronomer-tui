@@ -6,11 +6,14 @@ A Kubernetes terminal UI in the spirit of [k9s](https://k9scli.io), built in Go,
 
 ## Quickstart
 
-Install the latest release:
+Install a pinned release (replace the example version with the release you want):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alphabravo-oss/astronomer-tui/main/install.sh | sh
+VERSION=v0.1.0
+curl -fsSL "https://raw.githubusercontent.com/alphabravo-oss/astronomer-tui/${VERSION}/install.sh" | ASTROTUI_VERSION="$VERSION" sh
 ```
+
+The installer requires `cosign` and verifies the release checksum signature and archive digest before installing the binary.
 
 Or build locally:
 
