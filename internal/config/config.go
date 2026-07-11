@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -104,6 +106,9 @@ func Load(path string) (Config, error) {
 		default:
 			return cfg, &ValidationError{Path: path, Err: fmt.Errorf("ai.provider must be anthropic, openai, or ollama")}
 		}
+		if err := ValidateAIEndpoint(cfg.AI.Endpoint); err != nil {
+			return cfg, &ValidationError{Path: path, Err: err}
+		}
 	}
 	for name, ctx := range cfg.Contexts {
 		switch ctx.Policy {
@@ -113,6 +118,30 @@ func Load(path string) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func ValidateAIEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("ai.endpoint must be an absolute HTTP(S) URL")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme != "http" {
+		return fmt.Errorf("ai.endpoint must use HTTPS (HTTP is allowed only for loopback)")
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("ai.endpoint must use HTTPS for non-loopback hosts")
 }
 
 func validationError(path string, err error) error {

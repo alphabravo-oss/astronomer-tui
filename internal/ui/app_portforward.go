@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/alphabravo-oss/astrotui/internal/actions"
+	"github.com/alphabravo-oss/astrotui/internal/safety"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"io"
 	corev1 "k8s.io/api/core/v1"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,13 +20,36 @@ import (
 )
 
 func (a *App) showPortForwardPlan() {
+	currentContext := a.currentContext()
+	if safety.RequiresConfirmation(a.options.Config, currentContext, safety.PortForward) {
+		input := tview.NewInputField().
+			SetLabel(fmt.Sprintf("Type %s to port-forward: ", currentContext)).
+			SetFieldWidth(40)
+		input.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				a.showPortForwardPlanAuthorized(input.GetText())
+				return
+			}
+			a.app.SetRoot(a.table, true)
+		})
+		a.app.SetRoot(input, true)
+		return
+	}
+	a.showPortForwardPlanAuthorized("")
+}
+
+func (a *App) showPortForwardPlanAuthorized(typed string) {
+	if err := safety.Authorize(a.options.Config, a.currentContext(), safety.PortForward, typed); err != nil {
+		a.showMessage("Port-forward blocked", err.Error())
+		return
+	}
 	spec, ok := a.defaultPortForwardSpec()
 	if !ok {
 		return
 	}
 	input := tview.NewInputField().
 		SetLabel("Port-forward local:remote: ").
-		SetText(fmt.Sprintf("%d:%d", spec.Local, spec.Remote)).
+		SetText(portForwardInput(spec)).
 		SetFieldWidth(20)
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
@@ -33,7 +58,7 @@ func (a *App) showPortForwardPlan() {
 				a.showMessage("Port-forward unavailable", err.Error())
 				return
 			}
-			a.startPortForwardSpec(updated)
+			a.startPortForwardSpecWithConfirmation(updated, typed)
 			return
 		}
 		a.app.SetRoot(a.table, true)
@@ -79,15 +104,40 @@ func parsePortForwardSpec(input string, base actions.PortForwardSpec) (actions.P
 		return actions.PortForwardSpec{}, fmt.Errorf("local port must be a positive integer")
 	}
 	remote, err := strconv.Atoi(parts[1])
-	if err != nil || remote <= 0 {
-		return actions.PortForwardSpec{}, fmt.Errorf("remote port must be a positive integer")
+	if err == nil {
+		if remote <= 0 {
+			return actions.PortForwardSpec{}, fmt.Errorf("remote port must be a positive integer or valid named port")
+		}
+		base.Remote = remote
+		base.RemoteName = ""
+	} else {
+		remoteName := strings.TrimSpace(parts[1])
+		if problems := utilvalidation.IsValidPortName(remoteName); len(problems) > 0 {
+			return actions.PortForwardSpec{}, fmt.Errorf("remote port must be a positive integer or valid named port")
+		}
+		base.Remote = 0
+		base.RemoteName = remoteName
 	}
 	base.Local = local
-	base.Remote = remote
 	return base, nil
 }
 
+func portForwardInput(spec actions.PortForwardSpec) string {
+	if spec.RemoteName != "" {
+		return fmt.Sprintf("%d:%s", spec.Local, spec.RemoteName)
+	}
+	return fmt.Sprintf("%d:%d", spec.Local, spec.Remote)
+}
+
 func (a *App) startPortForwardSpec(spec actions.PortForwardSpec) {
+	a.startPortForwardSpecWithConfirmation(spec, "")
+}
+
+func (a *App) startPortForwardSpecWithConfirmation(spec actions.PortForwardSpec, typed string) {
+	if err := safety.Authorize(a.options.Config, a.currentContext(), safety.PortForward, typed); err != nil {
+		a.showMessage("Port-forward blocked", err.Error())
+		return
+	}
 	manager := a.options.PortForwards
 	if manager == nil {
 		manager = actions.NewPortForwardManager()
@@ -99,7 +149,7 @@ func (a *App) startPortForwardSpec(spec actions.PortForwardSpec) {
 	a.mu.RUnlock()
 	go a.runPortForward(ctx, client, spec)
 	manager.Add(actions.NewPortForward(spec, cancel))
-	a.showMessage("Port-forward", fmt.Sprintf("%s %d:%d", spec.Resource, spec.Local, spec.Remote))
+	a.showMessage("Port-forward", fmt.Sprintf("%s %d:%s", spec.Resource, spec.Local, spec.RemoteTarget()))
 }
 
 func (a *App) runPortForward(ctx context.Context, client *cluster.Client, spec actions.PortForwardSpec) {
@@ -152,7 +202,7 @@ func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {
 			forward.Namespace,
 			forward.Resource,
 			fmt.Sprint(forward.Local),
-			fmt.Sprint(forward.Remote),
+			portForwardRemote(forward),
 			time.Since(forward.Since).Round(time.Second).String(),
 		}
 		for col, value := range values {
@@ -162,6 +212,13 @@ func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {
 	if len(forwards) == 0 {
 		table.SetCell(1, 0, tview.NewTableCell("No active port-forwards"))
 	}
+}
+
+func portForwardRemote(forward actions.PortForward) string {
+	if forward.RemoteName != "" {
+		return forward.RemoteName
+	}
+	return fmt.Sprint(forward.Remote)
 }
 
 func portForwardIDAt(table *tview.Table, forwards []actions.PortForward) string {

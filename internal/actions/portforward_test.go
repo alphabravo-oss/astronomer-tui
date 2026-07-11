@@ -93,3 +93,17 @@ func TestResolveServicePortForwardSpec(t *testing.T) {
 		t.Fatal("expected selector error")
 	}
 }
+
+func TestResolveNamedServiceTargetPort(t *testing.T) {
+	client := kubefake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-0", Namespace: "default", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}}}}},
+	)
+	spec, err := ResolvePortForwardSpec(context.Background(), client, PortForwardSpec{Namespace: "default", Resource: "service/api", Local: 80, RemoteName: "http"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Resource != "pod/api-0" || spec.Remote != 8080 || spec.RemoteName != "" {
+		t.Fatalf("unexpected resolved spec %#v", spec)
+	}
+}

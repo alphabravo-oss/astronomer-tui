@@ -9,11 +9,14 @@ import (
 	"github.com/rivo/tview"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/yaml"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/alphabravo-oss/astrotui/internal/ui/views"
 )
 
 func (a *App) showFailureAI() {
@@ -35,7 +38,7 @@ func (a *App) showFailureAI() {
 		a.showMessage("AI failed", err.Error())
 		return
 	}
-	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetText("Asking AI...")
+	view := tview.NewTextView().SetDynamicColors(false).SetScrollable(true).SetText("Asking AI...")
 	view.SetTitle(" AI failure analysis ").SetBorder(true)
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
@@ -103,9 +106,26 @@ func podFailureReason(pod corev1.Pod) string {
 }
 
 func (a *App) showManifestAI(view *tview.TextView, manifest string) {
+	a.showManifestAIForObject(view, manifest, nil)
+}
+
+func (a *App) showManifestAIForObject(view *tview.TextView, manifest string, obj *unstructured.Unstructured) {
 	if a.options.AIProvider == nil {
 		view.SetText("AI is disabled. Configure ai.enabled and ai.provider in ~/.config/astrotui/config.yaml")
 		return
+	}
+	if obj != nil && strings.EqualFold(obj.GetKind(), "Secret") {
+		redacted := obj.DeepCopy()
+		if data, ok, _ := unstructured.NestedMap(redacted.Object, "data"); ok {
+			for key := range data {
+				data[key] = "<redacted>"
+			}
+			_ = unstructured.SetNestedMap(redacted.Object, data, "data")
+		}
+		delete(redacted.Object, "stringData")
+		if body, err := views.YAMLDetail(redacted); err == nil {
+			manifest = body
+		}
 	}
 	a.streamAIResponse(view, ai.ManifestRequest(manifest))
 }
@@ -120,6 +140,7 @@ func (a *App) streamAIResponse(view *tview.TextView, req ai.Request) {
 			a.app.QueueUpdateDraw(func() { view.SetText("AI failed: " + err.Error()) })
 			return
 		}
+		const maxAIOutput = 1 << 20
 		var b strings.Builder
 		for chunk := range chunks {
 			if chunk.Err != nil {
@@ -128,6 +149,14 @@ func (a *App) streamAIResponse(view *tview.TextView, req ai.Request) {
 				return
 			}
 			if chunk.Text != "" {
+				remaining := maxAIOutput - b.Len()
+				if remaining <= 0 {
+					a.app.QueueUpdateDraw(func() { view.SetText(b.String() + "\n[output truncated]") })
+					return
+				}
+				if len(chunk.Text) > remaining {
+					chunk.Text = chunk.Text[:remaining]
+				}
 				b.WriteString(chunk.Text)
 				text := b.String()
 				a.app.QueueUpdateDraw(func() { view.SetText(text) })

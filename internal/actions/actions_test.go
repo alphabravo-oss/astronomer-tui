@@ -183,3 +183,16 @@ func TestStrategicMergePatch(t *testing.T) {
 		t.Fatalf("unexpected patch %s", patch)
 	}
 }
+
+func TestStrategicMergePatchCarriesResourceVersion(t *testing.T) {
+	patch, err := StrategicMergePatch(
+		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\n  resourceVersion: \"42\"\ndata:\n  mode: old\n"),
+		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\n  resourceVersion: \"42\"\ndata:\n  mode: new\n"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(patch), `"resourceVersion":"42"`) {
+		t.Fatalf("missing concurrency precondition in %s", patch)
+	}
+}

@@ -48,6 +48,24 @@ func TestLoadRejectsUnknownFieldWithLine(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsRemotePlaintextAIEndpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "ai:\n  enabled: true\n  provider: openai\n  endpoint: http://example.com/v1\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected non-loopback plaintext endpoint rejection")
+	}
+	data = "ai:\n  enabled: true\n  provider: ollama\n  endpoint: http://127.0.0.1:11434/api/generate\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("expected loopback endpoint to be allowed: %v", err)
+	}
+}
+
 func TestImportK9s(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
@@ -93,5 +111,23 @@ func TestImportK9s(t *testing.T) {
 	}
 	if third[1] != (ImportResult{File: "skin.yaml", Status: "conflict"}) {
 		t.Fatalf("expected skin conflict, got %#v", third)
+	}
+}
+
+func TestImportK9sRejectsDestinationSymlink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "skin.yaml"), []byte("skin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "outside")
+	if err := os.Symlink(target, filepath.Join(dst, "skin.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportK9s(src, dst); err == nil {
+		t.Fatal("expected symlink destination rejection")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("outside target should not be created: %v", err)
 	}
 }

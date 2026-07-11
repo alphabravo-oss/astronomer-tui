@@ -59,3 +59,27 @@ func TestBufferAssignsStablePodColor(t *testing.T) {
 		t.Fatalf("unexpected entries %#v", entries)
 	}
 }
+
+func TestBufferBoundsBytesAndSaveRepairsPermissions(t *testing.T) {
+	buffer := NewBufferWithByteLimit(100, 256)
+	for range 20 {
+		buffer.Append("api", strings.Repeat("x", 40), time.Now())
+	}
+	if len(buffer.Entries()) >= 20 {
+		t.Fatal("expected byte budget to evict entries")
+	}
+	path := filepath.Join(t.TempDir(), "logs.txt")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.Save(path, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected private export mode, got %o", info.Mode().Perm())
+	}
+}

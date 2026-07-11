@@ -35,6 +35,22 @@ import (
 
 var errTestExecShellMissing = errors.New("shell missing")
 
+type captureProvider struct {
+	requests chan ai.Request
+}
+
+func (c captureProvider) Complete(_ context.Context, _ ai.Request) (ai.Response, error) {
+	return ai.Response{}, nil
+}
+
+func (c captureProvider) Stream(_ context.Context, req ai.Request) (<-chan ai.Chunk, error) {
+	c.requests <- req
+	chunks := make(chan ai.Chunk, 1)
+	chunks <- ai.Chunk{Done: true}
+	close(chunks)
+	return chunks, nil
+}
+
 func TestHelpTextUsesActionCatalog(t *testing.T) {
 	text := HelpText(actions.CatalogFor("Pod"))
 	for _, want := range []string{"exec", "logs", "port-forward", "Ctrl+P", "enter", "filter", "sort", "delete", "command"} {
@@ -306,6 +322,18 @@ func TestExecutePaletteNamespaceEntry(t *testing.T) {
 	}
 }
 
+func TestSwitchNamespaceClearsStaleSelection(t *testing.T) {
+	app := New(Options{Client: &cluster.Client{Context: "dev", Namespace: "old"}})
+	app.currentGVR = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	app.renderer = views.GenericRenderer{Resource: app.currentGVR}
+	app.objects = []*unstructured.Unstructured{namedObject("api", "old")}
+	app.visibleObjects = append([]*unstructured.Unstructured(nil), app.objects...)
+	app.switchNamespace("new")
+	if app.options.Client.Namespace != "new" || len(app.objects) != 0 || len(app.visibleObjects) != 0 {
+		t.Fatalf("stale selection survived namespace switch: %#v", app.visibleObjects)
+	}
+}
+
 func TestPaletteEntriesIncludeDiscoveredNamespaces(t *testing.T) {
 	app := New(Options{Client: &cluster.Client{
 		Namespace: "default",
@@ -440,6 +468,33 @@ func TestPortForwardInputParsingAndStart(t *testing.T) {
 	}
 	if _, err := parsePortForwardSpec("bad", base); err == nil {
 		t.Fatal("expected parse error")
+	}
+	named, err := parsePortForwardSpec("18080:http", base)
+	if err != nil || named.RemoteName != "http" || named.Remote != 0 || portForwardInput(named) != "18080:http" {
+		t.Fatalf("unexpected named port parse %#v err=%v", named, err)
+	}
+}
+
+func TestPortForwardAndPluginHonorReadOnlyPolicy(t *testing.T) {
+	cfg := config.Default()
+	cfg.Contexts = map[string]config.ContextConfig{"prod": {Policy: "read-only"}}
+	called := false
+	app := New(Options{
+		Client:       &cluster.Client{Context: "prod", Namespace: "default"},
+		Config:       cfg,
+		PortForwards: actions.NewPortForwardManager(),
+		PluginExecutor: func(plugins.CommandPlan) error {
+			called = true
+			return nil
+		},
+	})
+	app.startPortForwardSpec(actions.PortForwardSpec{Namespace: "default", Resource: "pod/api", Local: 8080, Remote: 8080})
+	if len(app.options.PortForwards.List()) != 0 {
+		t.Fatal("read-only context started a port-forward")
+	}
+	app.executePluginEntry(palette.Entry{Title: "delete", Payload: plugins.Plugin{Command: "kubectl", Args: []string{"delete", "pod", "api"}}})
+	if called {
+		t.Fatal("read-only context executed a plugin")
 	}
 }
 
@@ -609,7 +664,8 @@ func TestLogLineWriterAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := renderLogEntries(buffer.Entries(), true)
-	if !strings.Contains(rendered, "[api] first") || !strings.Contains(rendered, "[api] second") {
+	visible := tview.Unescape(rendered)
+	if !strings.Contains(visible, "[api] first") || !strings.Contains(visible, "[api] second") {
 		t.Fatalf("unexpected rendered logs %q", rendered)
 	}
 	if !strings.Contains(rendered, "[-]") {
@@ -754,6 +810,26 @@ func TestManifestAIDisabledHint(t *testing.T) {
 	app.showManifestAI(view, "kind: Pod")
 	if !strings.Contains(view.GetText(true), "AI is disabled") {
 		t.Fatalf("expected disabled hint, got %q", view.GetText(true))
+	}
+}
+
+func TestSecretManifestAIRedactsData(t *testing.T) {
+	requests := make(chan ai.Request, 1)
+	app := New(Options{AIProvider: captureProvider{requests: requests}})
+	secret := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "credentials"},
+		"data":       map[string]any{"token": "c2VjcmV0"},
+	}}
+	app.showManifestAIForObject(tview.NewTextView(), "original", secret)
+	select {
+	case req := <-requests:
+		if strings.Contains(req.Prompt, "c2VjcmV0") || !strings.Contains(req.Prompt, "<redacted>") {
+			t.Fatalf("secret was not redacted: %s", req.Prompt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for AI request")
 	}
 }
 
