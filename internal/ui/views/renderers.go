@@ -109,6 +109,9 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 		}
 	}
 	columns := []string{"NAME"}
+	if crd.Spec.Scope == apiextensionsv1.NamespaceScoped {
+		columns = append(columns, "NAMESPACE")
+	}
 	paths := map[string]string{}
 	for _, item := range crd.Spec.Versions {
 		if item.Name != version {
@@ -120,7 +123,11 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 		}
 		break
 	}
-	if len(columns) == 1 {
+	minimumColumns := 1
+	if crd.Spec.Scope == apiextensionsv1.NamespaceScoped {
+		minimumColumns = 2
+	}
+	if len(columns) == minimumColumns {
 		columns = append(columns, "AGE")
 	}
 	return GenericRenderer{

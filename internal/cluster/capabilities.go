@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -76,6 +77,33 @@ type AccessRequest struct {
 	Namespace   string
 	Name        string
 	Subresource string
+}
+
+type Identity struct {
+	Username string
+	UID      string
+	Groups   []string
+	Extra    map[string][]string
+}
+
+func ReviewIdentity(ctx context.Context, client *Client) (Identity, error) {
+	if client == nil || client.Clientset == nil {
+		return Identity{}, fmt.Errorf("kubernetes clientset is required")
+	}
+	review, err := client.Clientset.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+	if err != nil {
+		return Identity{}, err
+	}
+	identity := Identity{
+		Username: review.Status.UserInfo.Username,
+		UID:      review.Status.UserInfo.UID,
+		Groups:   append([]string(nil), review.Status.UserInfo.Groups...),
+		Extra:    make(map[string][]string, len(review.Status.UserInfo.Extra)),
+	}
+	for key, values := range review.Status.UserInfo.Extra {
+		identity.Extra[key] = append([]string(nil), values...)
+	}
+	return identity, nil
 }
 
 func CanI(ctx context.Context, client *Client, request AccessRequest) (bool, string, error) {

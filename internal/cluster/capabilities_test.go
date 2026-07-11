@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,5 +38,24 @@ func TestResourceInfoSupportsVerb(t *testing.T) {
 	info := ResourceInfo{Verbs: map[string]struct{}{"get": {}, "list": {}}}
 	if !info.Supports("GET") || info.Supports("delete") {
 		t.Fatalf("unexpected verb support")
+	}
+}
+
+func TestReviewIdentityUsesSelfSubjectReview(t *testing.T) {
+	clientset := kubefake.NewSimpleClientset()
+	clientset.PrependReactor("create", "selfsubjectreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
+		if _, ok := action.(ktesting.CreateAction).GetObject().(*authenticationv1.SelfSubjectReview); !ok {
+			t.Fatalf("unexpected review object %T", action.(ktesting.CreateAction).GetObject())
+		}
+		return true, &authenticationv1.SelfSubjectReview{Status: authenticationv1.SelfSubjectReviewStatus{UserInfo: authenticationv1.UserInfo{
+			Username: "alice", UID: "1001", Groups: []string{"operators"}, Extra: map[string]authenticationv1.ExtraValue{"scopes": {"dev"}},
+		}}}, nil
+	})
+	identity, err := ReviewIdentity(context.Background(), &Client{Clientset: clientset})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Username != "alice" || identity.UID != "1001" || len(identity.Groups) != 1 || identity.Extra["scopes"][0] != "dev" {
+		t.Fatalf("unexpected identity %#v", identity)
 	}
 }

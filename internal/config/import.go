@@ -28,7 +28,7 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 	if err := os.MkdirAll(dstDir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(dstDir, 0o700); err != nil {
+	if err := os.Chmod(dstDir, 0o700); err != nil { // #nosec G302 -- this is a private directory permission, not a file permission.
 		return nil, err
 	}
 	results := make([]ImportResult, 0, len(mapping))

@@ -20,6 +20,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -179,6 +180,10 @@ func TestParseNamespaceCommand(t *testing.T) {
 	if _, ok := parseCommand(":namespace"); ok {
 		t.Fatal("namespace command should require a value")
 	}
+	auth, ok := parseCommand(":auth")
+	if !ok || auth.Kind != "auth-summary" {
+		t.Fatalf("unexpected auth command %#v %v", auth, ok)
+	}
 }
 
 func TestInitialResourceGVRUsesSessionState(t *testing.T) {
@@ -331,6 +336,28 @@ func TestDiscoveryAliasesAndVerbsDriveAvailableActions(t *testing.T) {
 	}
 }
 
+func TestDiscoverCRDRendererUsesPrinterColumns(t *testing.T) {
+	crdGVR := schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+	crd := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+		"metadata": map[string]any{"name": "widgets.example.com"},
+		"spec": map[string]any{
+			"group": "example.com", "scope": "Namespaced", "names": map[string]any{"plural": "widgets", "kind": "Widget"},
+			"versions": []any{map[string]any{"name": "v1", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}, "additionalPrinterColumns": []any{map[string]any{"name": "Phase", "type": "string", "jsonPath": ".status.phase"}}}},
+		},
+	}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"}, crd)
+	renderers := discoverCRDRenderers(&cluster.Client{Dynamic: client}, []cluster.ResourceInfo{{GVR: crdGVR, Verbs: map[string]struct{}{"list": {}}}})
+	renderer := renderers[schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}]
+	if renderer == nil {
+		t.Fatal("expected discovered CRD renderer")
+	}
+	headers := renderer.Header()
+	if len(headers) != 3 || headers[0].Name != "NAME" || headers[1].Name != "NAMESPACE" || headers[2].Name != "PHASE" {
+		t.Fatalf("unexpected CRD headers %#v", headers)
+	}
+}
+
 func TestExecutePaletteNamespaceEntry(t *testing.T) {
 	app := New(Options{})
 	if !app.executePaletteEntry(palette.Entry{ID: "namespace:kube-system", Title: "kube-system", Category: palette.Namespaces}) {
@@ -416,6 +443,10 @@ func TestExecutePaletteActionEntry(t *testing.T) {
 
 func TestExecutePaletteEditEntryRunsEditor(t *testing.T) {
 	editor := &spyEditor{}
+	clientset := kubefake.NewSimpleClientset()
+	clientset.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
 	obj := namedObject("api", "default")
 	obj.SetKind("Pod")
 	app := New(Options{
@@ -423,6 +454,7 @@ func TestExecutePaletteEditEntryRunsEditor(t *testing.T) {
 			Context:   "kind-kind",
 			Namespace: "default",
 			Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+			Clientset: clientset,
 		},
 		Editor: editor,
 	})
@@ -839,7 +871,7 @@ func TestSecretManifestAIRedactsData(t *testing.T) {
 		"apiVersion": "v1",
 		"kind":       "Secret",
 		"metadata":   map[string]any{"name": "credentials"},
-		"data":       map[string]any{"token": "c2VjcmV0"},
+		"data":       map[string]any{"token": "c2VjcmV0"}, // #nosec G101 -- synthetic value verifies Secret redaction.
 	}}
 	app.showManifestAIForObject(tview.NewTextView(), "original", secret)
 	select {
@@ -877,6 +909,30 @@ func TestExecutePalettePluginEntryPlansCommand(t *testing.T) {
 	}
 	if got.Command != "kubectl" || strings.Join(got.Args, " ") != "logs api -n default" {
 		t.Fatalf("unexpected plan %#v", got)
+	}
+}
+
+func TestMutatingPluginRequiresPreviewBeforeExecution(t *testing.T) {
+	var previewed, executed bool
+	app := New(Options{
+		PluginPreviewer: func(_ context.Context, plan plugins.CommandPlan) (string, error) {
+			previewed = plan.Mutates
+			return "server dry-run output", nil
+		},
+		PluginExecutor: func(plugins.CommandPlan) error {
+			executed = true
+			return nil
+		},
+	})
+	entry := palette.Entry{Title: "delete", Payload: plugins.Plugin{
+		Command: "kubectl", Args: []string{"delete", "pod", "api"}, Mutates: true,
+		PreviewCommand: "kubectl", PreviewArgs: []string{"delete", "pod", "api", "--dry-run=server"},
+	}}
+	if !app.executePluginEntry(entry) || !previewed {
+		t.Fatal("expected mutating plugin preview")
+	}
+	if executed {
+		t.Fatal("mutating plugin executed before explicit Apply")
 	}
 }
 

@@ -182,12 +182,17 @@ func strategicMergePatch(originalJSON, editedJSON []byte) ([]byte, error) {
 	patch := diffMap(original, edited)
 	if len(patch) > 0 {
 		if metadata, ok := original["metadata"].(map[string]any); ok {
+			patchMetadata, _ := patch["metadata"].(map[string]any)
+			if patchMetadata == nil {
+				patchMetadata = map[string]any{}
+			}
 			if resourceVersion, ok := metadata["resourceVersion"].(string); ok && resourceVersion != "" {
-				patchMetadata, _ := patch["metadata"].(map[string]any)
-				if patchMetadata == nil {
-					patchMetadata = map[string]any{}
-				}
 				patchMetadata["resourceVersion"] = resourceVersion
+			}
+			if uid, ok := metadata["uid"].(string); ok && uid != "" {
+				patchMetadata["uid"] = uid
+			}
+			if len(patchMetadata) > 0 {
 				patch["metadata"] = patchMetadata
 			}
 		}

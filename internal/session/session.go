@@ -48,7 +48,7 @@ func (s *Store) Save(state State) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(filepath.Dir(s.path), 0o700); err != nil {
+	if err := os.Chmod(filepath.Dir(s.path), 0o700); err != nil { // #nosec G302 -- this is a private directory permission, not a file permission.
 		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")

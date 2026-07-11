@@ -243,12 +243,43 @@ func (a *App) runAuthorizedPlugin(name string, plan plugins.CommandPlan, typed s
 		a.showMessage("Plugin blocked", err.Error())
 		return true
 	}
+	if plan.Mutates {
+		a.showPluginPreview(name, plan)
+		return true
+	}
 	if plan.Confirm {
 		a.showPluginConfirm(name, plan)
 		return true
 	}
 	a.runPluginPlan(name, plan)
 	return true
+}
+
+func (a *App) showPluginPreview(name string, plan plugins.CommandPlan) {
+	previewer := a.options.PluginPreviewer
+	if previewer == nil {
+		previewer = func(ctx context.Context, plan plugins.CommandPlan) (string, error) {
+			return plugins.Preview(ctx, plan, 64<<10)
+		}
+	}
+	ctx, cancel := context.WithTimeout(a.context(), 15*time.Second)
+	preview, err := previewer(ctx, plan)
+	cancel()
+	if err != nil {
+		a.showMessage("Plugin preview failed", err.Error())
+		return
+	}
+	text := fmt.Sprintf("Preview for %s succeeded.\n\n%s\n\nApply:\n%s %s", name, boundedPreview(preview, 64<<10), plan.Command, strings.Join(plan.Args, " "))
+	modal := tview.NewModal().SetText(text).AddButtons([]string{"Apply", "Cancel"})
+	modal.SetTitle(" Plugin dry-run preview ")
+	modal.SetDoneFunc(func(index int, _ string) {
+		if index == 0 {
+			a.runPluginPlan(name, plan)
+			return
+		}
+		a.app.SetRoot(a.table, true)
+	})
+	a.app.SetRoot(modal, false)
 }
 
 func (a *App) currentContext() string {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -101,6 +102,38 @@ func TestEditResourceNoopWhenUnchanged(t *testing.T) {
 	}
 	if updated.GetName() != "settings" {
 		t.Fatalf("unexpected updated object %#v", updated)
+	}
+}
+
+func TestEditPlanUsesUIDVersionAndServerDryRun(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "settings", "namespace": "default", "uid": "uid-1", "resourceVersion": "7"},
+		"data":     map[string]any{"mode": "old"},
+	}}
+	plan, err := PrepareEdit(obj, editFunc(func(path string) error {
+		return os.WriteFile(path, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\n  namespace: default\n  uid: uid-1\n  resourceVersion: \"7\"\ndata:\n  mode: new\n"), 0o600)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plan.Patch), `"uid":"uid-1"`) || !strings.Contains(string(plan.Patch), `"resourceVersion":"7"`) {
+		t.Fatalf("edit patch is not identity-bound: %s", plan.Patch)
+	}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj)
+	var sawDryRun bool
+	client.PrependReactor("patch", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchActionImpl)
+		dryRun := patchAction.GetPatchOptions().DryRun
+		sawDryRun = len(dryRun) == 1 && dryRun[0] == metav1.DryRunAll
+		return true, obj, nil
+	})
+	if err := PreviewEditPlan(context.Background(), client, gvr, plan); err != nil {
+		t.Fatal(err)
+	}
+	if !sawDryRun {
+		t.Fatal("expected edit preview to use server dry-run")
 	}
 }
 

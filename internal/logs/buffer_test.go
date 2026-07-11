@@ -69,7 +69,7 @@ func TestBufferBoundsBytesAndSaveRepairsPermissions(t *testing.T) {
 		t.Fatal("expected byte budget to evict entries")
 	}
 	path := filepath.Join(t.TempDir(), "logs.txt")
-	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil { // #nosec G306 -- the test intentionally verifies repair of permissive modes.
 		t.Fatal(err)
 	}
 	if err := buffer.Save(path, ""); err != nil {

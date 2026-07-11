@@ -15,6 +15,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,46 +36,48 @@ import (
 )
 
 type Options struct {
-	Client         *cluster.Client
-	Config         config.Config
-	SessionStore   *session.Store
-	InitialState   session.State
-	Skin           uitheme.Skin
-	SkinUpdates    <-chan uitheme.Update
-	PluginPaths    []string
-	PluginExecutor func(plugins.CommandPlan) error
-	ClientFactory  func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
-	Editor         actions.Editor
-	ExecRunner     func(context.Context, actions.ExecTarget) error
-	PortForwards   *actions.PortForwardManager
-	PortForwardRun func(context.Context, actions.PortForwardSpec) error
-	AIProvider     ai.LLMProvider
-	LogStreamer    func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
-	Version        string
+	Client          *cluster.Client
+	Config          config.Config
+	SessionStore    *session.Store
+	InitialState    session.State
+	Skin            uitheme.Skin
+	SkinUpdates     <-chan uitheme.Update
+	PluginPaths     []string
+	PluginExecutor  func(plugins.CommandPlan) error
+	PluginPreviewer func(context.Context, plugins.CommandPlan) (string, error)
+	ClientFactory   func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
+	Editor          actions.Editor
+	ExecRunner      func(context.Context, actions.ExecTarget) error
+	PortForwards    *actions.PortForwardManager
+	PortForwardRun  func(context.Context, actions.PortForwardSpec) error
+	AIProvider      ai.LLMProvider
+	LogStreamer     func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
+	Version         string
 }
 
 type App struct {
-	options         Options
-	app             *tview.Application
-	table           *tview.Table
-	cache           *cluster.ResourceCache
-	resourceInfo    map[schema.GroupVersionResource]cluster.ResourceInfo
-	resourceAliases map[string]schema.GroupVersionResource
-	currentGVR      schema.GroupVersionResource
-	objects         []*unstructured.Unstructured
-	visibleObjects  []*unstructured.Unstructured
-	filter          string
-	sortCol         int
-	sortDesc        bool
-	mu              sync.RWMutex
-	refreshMu       sync.Mutex
-	resourceCancel  context.CancelFunc
-	cacheCancel     context.CancelFunc
-	runCtx          context.Context
-	crashes         CrashReporter
-	renderer        views.Renderer
-	pluginFile      plugins.File
-	skin            uitheme.Skin
+	options           Options
+	app               *tview.Application
+	table             *tview.Table
+	cache             *cluster.ResourceCache
+	resourceInfo      map[schema.GroupVersionResource]cluster.ResourceInfo
+	resourceAliases   map[string]schema.GroupVersionResource
+	resourceRenderers map[schema.GroupVersionResource]views.Renderer
+	currentGVR        schema.GroupVersionResource
+	objects           []*unstructured.Unstructured
+	visibleObjects    []*unstructured.Unstructured
+	filter            string
+	sortCol           int
+	sortDesc          bool
+	mu                sync.RWMutex
+	refreshMu         sync.Mutex
+	resourceCancel    context.CancelFunc
+	cacheCancel       context.CancelFunc
+	runCtx            context.Context
+	crashes           CrashReporter
+	renderer          views.Renderer
+	pluginFile        plugins.File
+	skin              uitheme.Skin
 }
 
 func New(options Options) *App {
@@ -196,6 +200,7 @@ func (a *App) newCache(client dynamic.Interface, namespace string) (*cluster.Res
 
 func (a *App) loadResourceInfo(client *cluster.Client) {
 	resources, _ := cluster.DiscoverResourceInfo(client)
+	renderers := discoverCRDRenderers(client, resources)
 	aliases := make(map[string]schema.GroupVersionResource)
 	for _, resource := range resources {
 		candidates := append([]string{resource.GVR.Resource, strings.ToLower(resource.Kind)}, resource.ShortNames...)
@@ -211,7 +216,56 @@ func (a *App) loadResourceInfo(client *cluster.Client) {
 	a.mu.Lock()
 	a.resourceInfo = cluster.ResourceInfoIndex(resources)
 	a.resourceAliases = aliases
+	a.resourceRenderers = renderers
 	a.mu.Unlock()
+}
+
+func discoverCRDRenderers(client *cluster.Client, resources []cluster.ResourceInfo) map[schema.GroupVersionResource]views.Renderer {
+	out := make(map[schema.GroupVersionResource]views.Renderer)
+	if client == nil || client.Dynamic == nil {
+		return out
+	}
+	crdGVR := schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+	var canListCRDs bool
+	for _, resource := range resources {
+		if resource.GVR == crdGVR && resource.Supports("list") {
+			canListCRDs = true
+			break
+		}
+	}
+	if !canListCRDs {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	list, err := client.Dynamic.Resource(crdGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return out
+	}
+	for i := range list.Items {
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(list.Items[i].Object, &crd); err != nil {
+			continue
+		}
+		for _, version := range crd.Spec.Versions {
+			if !version.Served {
+				continue
+			}
+			renderer := views.RendererForCRD(&crd, version.Name)
+			out[renderer.GVR()] = renderer
+		}
+	}
+	return out
+}
+
+func (a *App) rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
+	a.mu.RLock()
+	renderer := a.resourceRenderers[gvr]
+	a.mu.RUnlock()
+	if renderer != nil {
+		return renderer
+	}
+	return rendererForGVR(gvr)
 }
 
 func (a *App) resolveResource(command string) (schema.GroupVersionResource, bool) {
@@ -412,7 +466,7 @@ func (a *App) updateTitle() {
 }
 
 func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResource) bool {
-	renderer := rendererForGVR(gvr)
+	renderer := a.rendererForGVR(gvr)
 	if renderer == nil {
 		a.showMessage("Unknown resource", gvr.String())
 		return false
@@ -517,6 +571,9 @@ func (a *App) showCommand(ctx context.Context) {
 			case "port-forward-manager":
 				a.showPortForwardManager()
 				return
+			case "auth-summary":
+				a.showAuthSummary()
+				return
 			}
 		}
 		a.app.SetRoot(a.table, true)
@@ -609,6 +666,61 @@ func (a *App) clientFactory() func(context.Context, cluster.ClientOptions) (*clu
 	return cluster.NewClient
 }
 
+func (a *App) showAuthSummary() {
+	a.mu.RLock()
+	client := a.options.Client
+	gvr := a.currentGVR
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage("Identity and RBAC", "Kubernetes client is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.context(), 8*time.Second)
+	defer cancel()
+	identity, identityErr := cluster.ReviewIdentity(ctx, client)
+	namespace := namespaceFor(client, gvr, a.resourceNamespaced(gvr))
+	allowed := make([]string, 0, 7)
+	denied := make([]string, 0, 7)
+	unknown := make([]string, 0, 7)
+	for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
+		ok, _, err := cluster.CanI(ctx, client, cluster.AccessRequest{Verb: verb, GVR: gvr, Namespace: namespace})
+		switch {
+		case err != nil:
+			unknown = append(unknown, verb)
+		case ok:
+			allowed = append(allowed, verb)
+		default:
+			denied = append(denied, verb)
+		}
+	}
+	displayNamespace := namespace
+	if displayNamespace == "" {
+		displayNamespace = "all / cluster-scoped"
+	}
+	lines := []string{
+		"Context: " + client.Context,
+		"Namespace: " + displayNamespace,
+		"Resource: " + gvr.String(),
+	}
+	if identityErr == nil {
+		lines = append(lines, "Username: "+identity.Username, "UID: "+identity.UID, "Groups: "+strings.Join(identity.Groups, ", "))
+	} else {
+		configured := client.ImpersonateUser
+		if configured == "" {
+			configured = "not reported"
+		}
+		lines = append(lines, "Username: "+configured, "Identity review: "+identityErr.Error())
+	}
+	lines = append(lines,
+		"Allowed: "+strings.Join(allowed, ", "),
+		"Denied: "+strings.Join(denied, ", "),
+	)
+	if len(unknown) > 0 {
+		lines = append(lines, "Unknown: "+strings.Join(unknown, ", "))
+	}
+	a.showMessage("Identity and RBAC", strings.Join(lines, "\n"))
+}
+
 func resolveSkin(options Options) uitheme.Skin {
 	if options.Skin.Name != "" {
 		return options.Skin
@@ -660,7 +772,7 @@ func (a *App) showEdit() {
 			SetFieldWidth(40)
 		input.SetDoneFunc(func(key tcell.Key) {
 			if key == tcell.KeyEnter {
-				a.confirmEdit(obj, input.GetText())
+				a.confirmEdit(req, obj, input.GetText())
 				return
 			}
 			a.app.SetRoot(a.table, true)
@@ -668,17 +780,38 @@ func (a *App) showEdit() {
 		a.app.SetRoot(input, true)
 		return
 	}
-	a.confirmEdit(obj, "")
+	a.confirmEdit(req, obj, "")
 }
 
-func (a *App) confirmEdit(obj *unstructured.Unstructured, confirmText string) {
-	if err := safety.Authorize(a.options.Config, a.options.Client.Context, safety.Edit, confirmText); err != nil {
+func (a *App) confirmEdit(req actions.Request, obj *unstructured.Unstructured, confirmText string) {
+	a.mu.RLock()
+	client := a.options.Client
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage("Edit failed", "Kubernetes client is unavailable")
+		return
+	}
+	if err := safety.Authorize(a.options.Config, client.Context, safety.Edit, confirmText); err != nil {
 		a.showMessage("Edit failed", err.Error())
 		return
 	}
-	var err error
+	accessCtx, accessCancel := context.WithTimeout(a.context(), 2*time.Second)
+	allowed, reason, err := cluster.CanI(accessCtx, client, accessRequestForAction(req))
+	accessCancel()
+	if err != nil {
+		a.showMessage("Edit failed", "RBAC preflight failed: "+err.Error())
+		return
+	}
+	if !allowed {
+		if reason == "" {
+			reason = "the active identity is not authorized"
+		}
+		a.showMessage("Edit failed", "RBAC denied: "+reason)
+		return
+	}
+	var plan actions.EditPlan
 	run := func() {
-		_, err = actions.EditResource(context.Background(), a.options.Client.Dynamic, a.renderer.GVR(), obj, a.options.Editor)
+		plan, err = actions.PrepareEdit(obj, a.options.Editor)
 	}
 	if !a.app.Suspend(run) {
 		run()
@@ -692,7 +825,49 @@ func (a *App) confirmEdit(obj *unstructured.Unstructured, confirmText string) {
 		a.showMessage("Edit failed", err.Error())
 		return
 	}
-	a.showMessage("Edited", fmt.Sprintf("edited %s/%s", fallbackKind(a.renderer.GVR().Resource), obj.GetName()))
+	if len(plan.Patch) == 0 {
+		a.showMessage("Edit unchanged", "No changes to apply")
+		return
+	}
+	previewCtx, previewCancel := context.WithTimeout(a.context(), 15*time.Second)
+	err = actions.PreviewEditPlan(previewCtx, client.Dynamic, req.GVR, plan)
+	previewCancel()
+	if err != nil {
+		a.showMessage("Edit preview failed", err.Error())
+		return
+	}
+	modal := tview.NewModal().
+		SetText("Server dry-run succeeded.\n\n" + boundedPreview(plan.Diff, 64<<10)).
+		AddButtons([]string{"Apply", "Cancel"})
+	modal.SetTitle(" Edit dry-run preview ")
+	modal.SetDoneFunc(func(index int, _ string) {
+		if index != 0 {
+			a.app.SetRoot(a.table, true)
+			return
+		}
+		applyCtx, applyCancel := context.WithTimeout(a.context(), 30*time.Second)
+		_, applyErr := actions.ApplyEditPlan(applyCtx, client.Dynamic, req.GVR, plan)
+		applyCancel()
+		if applyErr != nil {
+			var conflict *actions.EditConflictError
+			if errors.As(applyErr, &conflict) {
+				a.showMessage("Edit conflict", conflict.Diff)
+				return
+			}
+			a.showMessage("Edit failed", applyErr.Error())
+			return
+		}
+		a.showMessage("Edited", fmt.Sprintf("edited %s/%s", req.Kind, req.ResourceName))
+	})
+	a.app.SetRoot(modal, false)
+}
+
+func boundedPreview(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "�")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return strings.ToValidUTF8(value[:limit], "�") + "\n… preview truncated"
 }
 
 func (a *App) selectedPod() (corev1.Pod, bool) {
@@ -990,6 +1165,7 @@ func HelpText(catalog []actions.Action) string {
 	}
 	lines = append(lines, "Ctrl+P  palette - Search resources, actions, contexts, namespaces, plugins")
 	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
+	lines = append(lines, ":auth  identity - Show active server identity and RBAC verbs for the current resource")
 	lines = append(lines, "/  filter - Filter visible rows")
 	lines = append(lines, "Shift+1..9  sort - Sort by column")
 	lines = append(lines, "?  help - Show this overlay")
