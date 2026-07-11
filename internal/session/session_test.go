@@ -23,7 +23,7 @@ func TestRoundTrip(t *testing.T) {
 
 func TestSaveRepairsExistingPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil { // #nosec G306 -- the test intentionally verifies repair of permissive modes.
 		t.Fatal(err)
 	}
 	if err := NewStore(path).Save(State{Context: "prod"}); err != nil {

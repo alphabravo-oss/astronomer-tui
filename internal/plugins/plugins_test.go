@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,5 +50,18 @@ func TestPlanNeverExpandsExecutable(t *testing.T) {
 	plan := Plan(Plugin{Command: "$NAME", Args: []string{"$NAME"}}, map[string]string{"NAME": "api"})
 	if plan.Command != "$NAME" || len(plan.Args) != 1 || plan.Args[0] != "api" {
 		t.Fatalf("unexpected plan %#v", plan)
+	}
+}
+
+func TestMutatingPluginPlanExpandsPreviewArguments(t *testing.T) {
+	plan := Plan(Plugin{
+		Command: "kubectl", Args: []string{"delete", "pod", "$NAME"}, Mutates: true,
+		PreviewCommand: "kubectl", PreviewArgs: []string{"delete", "pod", "$NAME", "--dry-run=server", "-o", "yaml"},
+	}, map[string]string{"NAME": "api"})
+	if !plan.Mutates || plan.PreviewCommand != "kubectl" || len(plan.PreviewArgs) != 6 || plan.PreviewArgs[2] != "api" {
+		t.Fatalf("unexpected mutating plan %#v", plan)
+	}
+	if _, err := Preview(context.Background(), CommandPlan{Mutates: true}, 1024); err == nil {
+		t.Fatal("expected missing preview command to block mutating plugin")
 	}
 }

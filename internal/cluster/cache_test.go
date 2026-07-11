@@ -77,3 +77,53 @@ func TestResourceCacheStartsInformerCreatedAfterStart(t *testing.T) {
 		t.Fatalf("unexpected list %#v", items)
 	}
 }
+
+func TestResourceCacheNamespaceScopeAndObjectBudget(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(),
+		podForCache("api", "default", "small"),
+		podForCache("other", "kube-system", "small"),
+		podForCache("huge", "default", string(make([]byte, 2048))),
+	)
+	resourceCache := NewResourceCacheWithOptions(client, time.Hour, CacheOptions{
+		Namespace: "default", MaxObjects: 10, MaxObjectBytes: 1024,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resourceCache.Start(ctx)
+	if !resourceCache.WaitForSyncFor(ctx, gvr, true) {
+		t.Fatal("cache did not sync")
+	}
+	items, err := resourceCache.ListFor(gvr, true, "default", labels.Everything())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].GetName() != "api" {
+		t.Fatalf("expected only bounded object in selected namespace, got %#v", items)
+	}
+	if state := resourceCache.State(gvr, true); state.Phase != WatchReady {
+		t.Fatalf("expected ready watch, got %#v", state)
+	}
+}
+
+func TestResourceCacheSubscriptionCanBeCancelled(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	resourceCache := NewResourceCache(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), time.Hour)
+	subscription := resourceCache.SubscribeFor(gvr, true)
+	subscription.Cancel()
+	subscription.Cancel()
+	resourceCache.publish(informerKey{gvr: gvr, namespaced: true}, Event{Type: EventAdded, Object: podForCache("api", "default", "small")})
+	select {
+	case event := <-subscription.Events:
+		t.Fatalf("cancelled subscription received event %#v", event)
+	default:
+	}
+}
+
+func podForCache(name, namespace, value string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": name, "namespace": namespace},
+		"spec":     map[string]any{"value": value},
+	}}
+}

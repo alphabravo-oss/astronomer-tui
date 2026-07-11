@@ -102,7 +102,7 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 	switch entry.Category {
 	case palette.Resources:
 		if strings.HasPrefix(entry.ID, "resource:") {
-			gvr, ok := resourceCommand(strings.TrimPrefix(entry.ID, "resource:"))
+			gvr, ok := a.resolveResource(strings.TrimPrefix(entry.ID, "resource:"))
 			if !ok {
 				return false
 			}
@@ -243,12 +243,43 @@ func (a *App) runAuthorizedPlugin(name string, plan plugins.CommandPlan, typed s
 		a.showMessage("Plugin blocked", err.Error())
 		return true
 	}
+	if plan.Mutates {
+		a.showPluginPreview(name, plan)
+		return true
+	}
 	if plan.Confirm {
 		a.showPluginConfirm(name, plan)
 		return true
 	}
 	a.runPluginPlan(name, plan)
 	return true
+}
+
+func (a *App) showPluginPreview(name string, plan plugins.CommandPlan) {
+	previewer := a.options.PluginPreviewer
+	if previewer == nil {
+		previewer = func(ctx context.Context, plan plugins.CommandPlan) (string, error) {
+			return plugins.Preview(ctx, plan, 64<<10)
+		}
+	}
+	ctx, cancel := context.WithTimeout(a.context(), 15*time.Second)
+	preview, err := previewer(ctx, plan)
+	cancel()
+	if err != nil {
+		a.showMessage("Plugin preview failed", err.Error())
+		return
+	}
+	text := fmt.Sprintf("Preview for %s succeeded.\n\n%s\n\nApply:\n%s %s", name, boundedPreview(preview, 64<<10), plan.Command, strings.Join(plan.Args, " "))
+	modal := tview.NewModal().SetText(text).AddButtons([]string{"Apply", "Cancel"})
+	modal.SetTitle(" Plugin dry-run preview ")
+	modal.SetDoneFunc(func(index int, _ string) {
+		if index == 0 {
+			a.runPluginPlan(name, plan)
+			return
+		}
+		a.app.SetRoot(a.table, true)
+	})
+	a.app.SetRoot(modal, false)
 }
 
 func (a *App) currentContext() string {
@@ -320,8 +351,24 @@ func (a *App) paletteEntries() []palette.Entry {
 	currentGVR := a.currentGVR
 	a.mu.RUnlock()
 	entries := palette.ResourceEntries(fallbackKind(currentGVR.Resource), objects)
+	seenResourceAliases := make(map[string]struct{})
 	for _, alias := range ResourceAliasEntries() {
-		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: alias, Category: palette.Resources})
+		id := "resource:" + alias
+		seenResourceAliases[strings.TrimPrefix(id, "resource::")] = struct{}{}
+		entries = append(entries, palette.Entry{ID: id, Title: alias, Category: palette.Resources})
+	}
+	a.mu.RLock()
+	discoveredAliases := make([]string, 0, len(a.resourceAliases))
+	for alias := range a.resourceAliases {
+		discoveredAliases = append(discoveredAliases, alias)
+	}
+	a.mu.RUnlock()
+	sort.Strings(discoveredAliases)
+	for _, alias := range discoveredAliases {
+		if _, exists := seenResourceAliases[alias]; exists {
+			continue
+		}
+		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: ":" + alias, Category: palette.Resources})
 	}
 	var actionNames []string
 	for _, action := range a.actionCatalog() {
@@ -349,7 +396,34 @@ func (a *App) actionCatalog() []actions.Action {
 		kind = fallbackKind(a.currentGVR.Resource)
 		a.mu.RUnlock()
 	}
-	return actions.CatalogFor(kind)
+	catalog := actions.CatalogFor(kind)
+	a.mu.RLock()
+	info, discovered := a.resourceInfo[a.currentGVR]
+	a.mu.RUnlock()
+	if !discovered {
+		return catalog
+	}
+	out := make([]actions.Action, 0, len(catalog))
+	for _, action := range catalog {
+		verb := requiredDiscoveryVerb(action.Name)
+		if verb == "" || info.Supports(verb) {
+			out = append(out, action)
+		}
+	}
+	return out
+}
+
+func requiredDiscoveryVerb(action string) string {
+	switch action {
+	case "describe", "logs":
+		return "get"
+	case "edit", "scale", "restart":
+		return "patch"
+	case "delete":
+		return "delete"
+	default:
+		return ""
+	}
 }
 
 func (a *App) actionAvailable(name string) bool {

@@ -16,10 +16,16 @@ import (
 )
 
 type Config struct {
-	Safety   SafetyConfig             `yaml:"safety"`
-	AI       AIConfig                 `yaml:"ai"`
-	Contexts map[string]ContextConfig `yaml:"contexts"`
-	Theme    string                   `yaml:"theme"`
+	Safety     SafetyConfig             `yaml:"safety"`
+	AI         AIConfig                 `yaml:"ai"`
+	Kubernetes KubernetesConfig         `yaml:"kubernetes"`
+	Contexts   map[string]ContextConfig `yaml:"contexts"`
+	Theme      string                   `yaml:"theme"`
+}
+
+type KubernetesConfig struct {
+	MaxCachedObjects     int `yaml:"maxCachedObjects"`
+	MaxCachedObjectBytes int `yaml:"maxCachedObjectBytes"`
 }
 
 type SafetyConfig struct {
@@ -74,9 +80,10 @@ func DefaultK9sDir() string {
 
 func Default() Config {
 	return Config{
-		Safety: SafetyConfig{ProdPattern: `(?i)prod|production`},
-		AI:     AIConfig{Enabled: false},
-		Theme:  "dark",
+		Safety:     SafetyConfig{ProdPattern: `(?i)prod|production`},
+		AI:         AIConfig{Enabled: false},
+		Kubernetes: KubernetesConfig{MaxCachedObjects: 10_000, MaxCachedObjectBytes: 2 << 20},
+		Theme:      "dark",
 	}
 }
 
@@ -96,6 +103,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Safety.ProdPattern == "" {
 		cfg.Safety.ProdPattern = `(?i)prod|production`
+	}
+	if cfg.Kubernetes.MaxCachedObjects <= 0 {
+		return cfg, &ValidationError{Path: path, Err: fmt.Errorf("kubernetes.maxCachedObjects must be greater than zero")}
+	}
+	if cfg.Kubernetes.MaxCachedObjectBytes <= 0 {
+		return cfg, &ValidationError{Path: path, Err: fmt.Errorf("kubernetes.maxCachedObjectBytes must be greater than zero")}
 	}
 	if _, err := regexp.Compile(cfg.Safety.ProdPattern); err != nil {
 		return cfg, &ValidationError{Path: path, Err: fmt.Errorf("safety.prodPattern is invalid: %w", err)}

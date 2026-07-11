@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,15 @@ const (
 	exConfig = 78
 )
 
+type stringListFlag []string
+
+func (s *stringListFlag) String() string { return strings.Join(*s, ",") }
+
+func (s *stringListFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -48,6 +58,11 @@ func run(args []string) int {
 	fs.SetOutput(os.Stderr)
 	contextName := fs.String("context", "", "Kubernetes context to use")
 	namespace := fs.String("namespace", "", "Kubernetes namespace to use")
+	allNamespaces := fs.Bool("all-namespaces", false, "Watch resources across all namespaces")
+	impersonateUser := fs.String("as", "", "Username to impersonate for Kubernetes requests")
+	impersonateUID := fs.String("as-uid", "", "UID to impersonate for Kubernetes requests")
+	var impersonateGroups stringListFlag
+	fs.Var(&impersonateGroups, "as-group", "Group to impersonate; may be repeated")
 	noRestore := fs.Bool("no-restore", false, "Skip restoring previous session state")
 	printVersion := fs.Bool("version", false, "Print version and exit")
 	headless := fs.Bool("headless", false, "Validate configuration and Kubernetes connectivity without starting the TUI")
@@ -78,13 +93,19 @@ func run(args []string) int {
 			}
 			if *namespace == "" {
 				*namespace = restored.Namespace
+				if restored.AllNamespaces {
+					*allNamespaces = true
+				}
 			}
 		}
 	}
 
 	setupCtx, setupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer setupCancel()
-	kube, err := cluster.NewClient(setupCtx, cluster.ClientOptions{Context: *contextName, Namespace: *namespace})
+	kube, err := cluster.NewClient(setupCtx, cluster.ClientOptions{
+		Context: *contextName, Namespace: *namespace, AllNamespaces: *allNamespaces,
+		ImpersonateUser: *impersonateUser, ImpersonateUID: *impersonateUID, ImpersonateGroups: impersonateGroups,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exUsage

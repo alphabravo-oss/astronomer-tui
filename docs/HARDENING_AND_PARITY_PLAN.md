@@ -34,12 +34,14 @@ Every release must pass:
 
 ## Phase 1 — trustworthy Kubernetes core
 
-- [ ] Namespace-scoped caches by default, with an explicit all-namespaces mode and configurable object/byte budgets.
-- [ ] Discovery-driven aliases, preferred versions, namespaced/cluster-scoped metadata, and CRD printer columns.
-- [ ] Immutable action targets carrying context, GVR, namespace, name, UID, and resourceVersion from selection through confirmation and execution.
-- [ ] Server-side dry-run/diff previews for edit, delete, scale, restart, and plugin-backed mutations where supported.
-- [ ] Watch recovery with relist/backoff, visible stale/error state, and deterministic subscription cleanup.
-- [ ] Kubernetes impersonation flags and a visible active identity/RBAC summary.
+- [x] Namespace-scoped caches by default, with an explicit all-namespaces mode and configurable object/byte budgets.
+- [x] Discovery-driven aliases, preferred versions, namespaced/cluster-scoped metadata, and CRD printer columns.
+- [x] Immutable action targets carrying context, GVR, namespace, name, UID, and resourceVersion from selection through confirmation and execution.
+- [x] Server-side dry-run/diff previews for edit, delete, scale, restart, and plugin-backed mutations where supported.
+- [x] Watch recovery with relist/backoff, visible stale/error state, and deterministic subscription cleanup.
+- [x] Kubernetes impersonation flags and a visible active identity/RBAC summary.
+
+Wave 2 includes discovery-driven preferred-resource aliases and mutation availability, live CRD printer columns, Kubernetes impersonation flags, `:auth` server identity and per-resource RBAC summaries, mutation `SelfSubjectAccessReview` preflight, immutable target binding, and server dry-run previews for delete, edit, scale, restart, and explicitly declared mutating plugins.
 
 ## Phase 2 — k9s workflow parity
 

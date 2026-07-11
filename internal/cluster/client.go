@@ -21,21 +21,28 @@ import (
 )
 
 type ClientOptions struct {
-	Context   string
-	Namespace string
+	Context           string
+	Namespace         string
+	AllNamespaces     bool
+	ImpersonateUser   string
+	ImpersonateUID    string
+	ImpersonateGroups []string
 }
 
 type Client struct {
-	Config          *rest.Config
-	Clientset       kubernetes.Interface
-	Dynamic         dynamic.Interface
-	Discovery       discovery.CachedDiscoveryInterface
-	Context         string
-	Namespace       string
-	KubeconfigPath  string
-	RawConfig       clientcmdapi.Config
-	RESTConfigQPS   float32
-	RESTConfigBurst int
+	Config            *rest.Config
+	Clientset         kubernetes.Interface
+	Dynamic           dynamic.Interface
+	Discovery         discovery.CachedDiscoveryInterface
+	Context           string
+	Namespace         string
+	KubeconfigPath    string
+	RawConfig         clientcmdapi.Config
+	RESTConfigQPS     float32
+	RESTConfigBurst   int
+	ImpersonateUser   string
+	ImpersonateUID    string
+	ImpersonateGroups []string
 }
 
 func ListOptions() metav1.ListOptions {
@@ -86,8 +93,11 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	}
 	restCfg.QPS = 50
 	restCfg.Burst = 100
+	restCfg.Impersonate.UserName = opts.ImpersonateUser
+	restCfg.Impersonate.UID = opts.ImpersonateUID
+	restCfg.Impersonate.Groups = append([]string(nil), opts.ImpersonateGroups...)
 	ns := opts.Namespace
-	if ns == "" {
+	if ns == "" && !opts.AllNamespaces {
 		if resolved, _, nsErr := deferred.Namespace(); nsErr == nil && resolved != "" {
 			ns = resolved
 		} else {
@@ -107,16 +117,19 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 		return nil, fmt.Errorf("failed to create discovery client: %w", err)
 	}
 	return &Client{
-		Config:          restCfg,
-		Clientset:       clientset,
-		Dynamic:         dyn,
-		Discovery:       cachedmemory.NewMemCacheClient(disco),
-		Context:         contextName,
-		Namespace:       ns,
-		KubeconfigPath:  path,
-		RawConfig:       raw,
-		RESTConfigQPS:   restCfg.QPS,
-		RESTConfigBurst: restCfg.Burst,
+		Config:            restCfg,
+		Clientset:         clientset,
+		Dynamic:           dyn,
+		Discovery:         cachedmemory.NewMemCacheClient(disco),
+		Context:           contextName,
+		Namespace:         ns,
+		KubeconfigPath:    path,
+		RawConfig:         raw,
+		RESTConfigQPS:     restCfg.QPS,
+		RESTConfigBurst:   restCfg.Burst,
+		ImpersonateUser:   opts.ImpersonateUser,
+		ImpersonateUID:    opts.ImpersonateUID,
+		ImpersonateGroups: append([]string(nil), opts.ImpersonateGroups...),
 	}, nil
 }
 

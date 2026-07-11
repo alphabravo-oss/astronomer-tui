@@ -123,6 +123,15 @@ current-context: test
 	if client.Context != "other" || client.Namespace != "other-system" {
 		t.Fatalf("expected context override, got context=%q namespace=%q", client.Context, client.Namespace)
 	}
+	client, err = NewClient(context.Background(), ClientOptions{
+		Context: "test", AllNamespaces: true, ImpersonateUser: "alice", ImpersonateUID: "1001", ImpersonateGroups: []string{"operators"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Namespace != "" || client.Config.Impersonate.UserName != "alice" || client.Config.Impersonate.UID != "1001" || len(client.Config.Impersonate.Groups) != 1 {
+		t.Fatalf("unexpected all-namespace impersonated client %#v", client)
+	}
 }
 
 func TestExecAuthPluginRegistrationImportPresent(t *testing.T) {

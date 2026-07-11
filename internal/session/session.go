@@ -9,10 +9,11 @@ import (
 )
 
 type State struct {
-	Context    string `json:"context"`
-	Namespace  string `json:"namespace"`
-	LastView   string `json:"lastView"`
-	LastFilter string `json:"lastFilter"`
+	Context       string `json:"context"`
+	Namespace     string `json:"namespace"`
+	AllNamespaces bool   `json:"allNamespaces,omitempty"`
+	LastView      string `json:"lastView"`
+	LastFilter    string `json:"lastFilter"`
 }
 
 type Store struct {
@@ -47,7 +48,7 @@ func (s *Store) Save(state State) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(filepath.Dir(s.path), 0o700); err != nil {
+	if err := os.Chmod(filepath.Dir(s.path), 0o700); err != nil { // #nosec G302 -- this is a private directory permission, not a file permission.
 		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")

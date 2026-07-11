@@ -29,6 +29,14 @@ type EditConflictError struct {
 	Diff string
 }
 
+type EditPlan struct {
+	Object   *unstructured.Unstructured
+	Original []byte
+	Edited   []byte
+	Patch    []byte
+	Diff     string
+}
+
 func (e *EditConflictError) Error() string {
 	return "edit conflict: " + e.Err.Error()
 }
@@ -56,37 +64,56 @@ func (e CommandEditor) Edit(path string) error {
 }
 
 func EditResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, obj *unstructured.Unstructured, editor Editor) (*unstructured.Unstructured, error) {
+	plan, err := PrepareEdit(obj, editor)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyEditPlan(ctx, client, gvr, plan)
+}
+
+func PrepareEdit(obj *unstructured.Unstructured, editor Editor) (EditPlan, error) {
 	if editor == nil {
 		defaultEditor := DefaultEditor()
 		editor = defaultEditor
 	}
 	original, err := YAMLForEdit(obj)
 	if err != nil {
-		return nil, err
+		return EditPlan{}, err
 	}
 	path, err := writeTempYAML(obj.GetName(), original)
 	if err != nil {
-		return nil, err
+		return EditPlan{}, err
 	}
 	defer func() { _ = os.Remove(path) }()
 	if err := editor.Edit(path); err != nil {
-		return nil, err
+		return EditPlan{}, err
 	}
 	edited, err := os.ReadFile(path) // #nosec G304 -- path is a tempfile created by this function.
 	if err != nil {
-		return nil, err
+		return EditPlan{}, err
 	}
 	patch, err := StrategicMergePatch(original, edited)
 	if err != nil {
-		return nil, err
+		return EditPlan{}, err
 	}
-	if len(patch) == 0 {
-		return obj, nil
+	return EditPlan{Object: obj, Original: original, Edited: edited, Patch: patch, Diff: simpleDiff(original, edited)}, nil
+}
+
+func PreviewEditPlan(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, plan EditPlan) error {
+	if len(plan.Patch) == 0 {
+		return nil
 	}
-	updated, err := PatchResource(ctx, client, gvr, obj.GetNamespace(), obj.GetName(), patch)
+	return PatchResourceDryRun(ctx, client, gvr, plan.Object.GetNamespace(), plan.Object.GetName(), plan.Patch)
+}
+
+func ApplyEditPlan(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, plan EditPlan) (*unstructured.Unstructured, error) {
+	if len(plan.Patch) == 0 {
+		return plan.Object, nil
+	}
+	updated, err := PatchResource(ctx, client, gvr, plan.Object.GetNamespace(), plan.Object.GetName(), plan.Patch)
 	if err != nil {
 		if apierrors.IsConflict(err) {
-			return nil, &EditConflictError{Err: err, Diff: simpleDiff(original, edited)}
+			return nil, &EditConflictError{Err: err, Diff: plan.Diff}
 		}
 		return nil, err
 	}

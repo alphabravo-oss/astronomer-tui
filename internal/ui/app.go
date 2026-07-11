@@ -15,6 +15,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,43 +36,48 @@ import (
 )
 
 type Options struct {
-	Client         *cluster.Client
-	Config         config.Config
-	SessionStore   *session.Store
-	InitialState   session.State
-	Skin           uitheme.Skin
-	SkinUpdates    <-chan uitheme.Update
-	PluginPaths    []string
-	PluginExecutor func(plugins.CommandPlan) error
-	ClientFactory  func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
-	Editor         actions.Editor
-	ExecRunner     func(context.Context, actions.ExecTarget) error
-	PortForwards   *actions.PortForwardManager
-	PortForwardRun func(context.Context, actions.PortForwardSpec) error
-	AIProvider     ai.LLMProvider
-	LogStreamer    func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
-	Version        string
+	Client          *cluster.Client
+	Config          config.Config
+	SessionStore    *session.Store
+	InitialState    session.State
+	Skin            uitheme.Skin
+	SkinUpdates     <-chan uitheme.Update
+	PluginPaths     []string
+	PluginExecutor  func(plugins.CommandPlan) error
+	PluginPreviewer func(context.Context, plugins.CommandPlan) (string, error)
+	ClientFactory   func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
+	Editor          actions.Editor
+	ExecRunner      func(context.Context, actions.ExecTarget) error
+	PortForwards    *actions.PortForwardManager
+	PortForwardRun  func(context.Context, actions.PortForwardSpec) error
+	AIProvider      ai.LLMProvider
+	LogStreamer     func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
+	Version         string
 }
 
 type App struct {
-	options        Options
-	app            *tview.Application
-	table          *tview.Table
-	cache          *cluster.ResourceCache
-	currentGVR     schema.GroupVersionResource
-	objects        []*unstructured.Unstructured
-	visibleObjects []*unstructured.Unstructured
-	filter         string
-	sortCol        int
-	sortDesc       bool
-	mu             sync.RWMutex
-	resourceCancel context.CancelFunc
-	cacheCancel    context.CancelFunc
-	runCtx         context.Context
-	crashes        CrashReporter
-	renderer       views.Renderer
-	pluginFile     plugins.File
-	skin           uitheme.Skin
+	options           Options
+	app               *tview.Application
+	table             *tview.Table
+	cache             *cluster.ResourceCache
+	resourceInfo      map[schema.GroupVersionResource]cluster.ResourceInfo
+	resourceAliases   map[string]schema.GroupVersionResource
+	resourceRenderers map[schema.GroupVersionResource]views.Renderer
+	currentGVR        schema.GroupVersionResource
+	objects           []*unstructured.Unstructured
+	visibleObjects    []*unstructured.Unstructured
+	filter            string
+	sortCol           int
+	sortDesc          bool
+	mu                sync.RWMutex
+	refreshMu         sync.Mutex
+	resourceCancel    context.CancelFunc
+	cacheCancel       context.CancelFunc
+	runCtx            context.Context
+	crashes           CrashReporter
+	renderer          views.Renderer
+	pluginFile        plugins.File
+	skin              uitheme.Skin
 }
 
 func New(options Options) *App {
@@ -90,7 +97,8 @@ func New(options Options) *App {
 func (a *App) Run(ctx context.Context) error {
 	gvr := initialResourceGVR(a.options.InitialState)
 	a.runCtx = ctx
-	a.cache, a.cacheCancel = a.newCache(a.options.Client.Dynamic)
+	a.loadResourceInfo(a.options.Client)
+	a.cache, a.cacheCancel = a.newCache(a.options.Client.Dynamic, a.options.Client.Namespace)
 	a.switchResource(ctx, gvr)
 	if a.options.InitialState.LastFilter != "" {
 		a.mu.Lock()
@@ -177,14 +185,108 @@ func (a *App) context() context.Context {
 	return context.Background()
 }
 
-func (a *App) newCache(client dynamic.Interface) (*cluster.ResourceCache, context.CancelFunc) {
-	cache := cluster.NewResourceCache(client, 30*time.Minute)
+func (a *App) newCache(client dynamic.Interface, namespace string) (*cluster.ResourceCache, context.CancelFunc) {
+	cache := cluster.NewResourceCacheWithOptions(client, 30*time.Minute, cluster.CacheOptions{
+		Namespace: namespace, AllNamespaces: namespace == "",
+		MaxObjects: a.options.Config.Kubernetes.MaxCachedObjects, MaxObjectBytes: a.options.Config.Kubernetes.MaxCachedObjectBytes,
+	})
 	if a.runCtx == nil {
 		return cache, nil
 	}
 	cacheCtx, cancel := context.WithCancel(a.runCtx)
 	cache.Start(cacheCtx)
 	return cache, cancel
+}
+
+func (a *App) loadResourceInfo(client *cluster.Client) {
+	resources, _ := cluster.DiscoverResourceInfo(client)
+	renderers := discoverCRDRenderers(client, resources)
+	aliases := make(map[string]schema.GroupVersionResource)
+	for _, resource := range resources {
+		candidates := append([]string{resource.GVR.Resource, strings.ToLower(resource.Kind)}, resource.ShortNames...)
+		for _, candidate := range candidates {
+			candidate = strings.ToLower(strings.TrimSpace(candidate))
+			if candidate != "" {
+				if _, exists := aliases[candidate]; !exists {
+					aliases[candidate] = resource.GVR
+				}
+			}
+		}
+	}
+	a.mu.Lock()
+	a.resourceInfo = cluster.ResourceInfoIndex(resources)
+	a.resourceAliases = aliases
+	a.resourceRenderers = renderers
+	a.mu.Unlock()
+}
+
+func discoverCRDRenderers(client *cluster.Client, resources []cluster.ResourceInfo) map[schema.GroupVersionResource]views.Renderer {
+	out := make(map[schema.GroupVersionResource]views.Renderer)
+	if client == nil || client.Dynamic == nil {
+		return out
+	}
+	crdGVR := schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+	var canListCRDs bool
+	for _, resource := range resources {
+		if resource.GVR == crdGVR && resource.Supports("list") {
+			canListCRDs = true
+			break
+		}
+	}
+	if !canListCRDs {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	list, err := client.Dynamic.Resource(crdGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return out
+	}
+	for i := range list.Items {
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(list.Items[i].Object, &crd); err != nil {
+			continue
+		}
+		for _, version := range crd.Spec.Versions {
+			if !version.Served {
+				continue
+			}
+			renderer := views.RendererForCRD(&crd, version.Name)
+			out[renderer.GVR()] = renderer
+		}
+	}
+	return out
+}
+
+func (a *App) rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
+	a.mu.RLock()
+	renderer := a.resourceRenderers[gvr]
+	a.mu.RUnlock()
+	if renderer != nil {
+		return renderer
+	}
+	return rendererForGVR(gvr)
+}
+
+func (a *App) resolveResource(command string) (schema.GroupVersionResource, bool) {
+	if gvr, ok := resourceCommand(command); ok {
+		return gvr, true
+	}
+	normalized := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(command)), ":")
+	a.mu.RLock()
+	gvr, ok := a.resourceAliases[normalized]
+	a.mu.RUnlock()
+	return gvr, ok
+}
+
+func (a *App) resourceNamespaced(gvr schema.GroupVersionResource) bool {
+	a.mu.RLock()
+	info, ok := a.resourceInfo[gvr]
+	a.mu.RUnlock()
+	if ok {
+		return info.Namespaced
+	}
+	return !clusterScoped(gvr.Resource)
 }
 
 func initialResourceGVR(state session.State) schema.GroupVersionResource {
@@ -196,17 +298,18 @@ func initialResourceGVR(state session.State) schema.GroupVersionResource {
 
 func (a *App) sessionState() session.State {
 	state := session.State{}
+	a.mu.RLock()
 	if a.options.Client != nil {
 		state.Context = a.options.Client.Context
 		state.Namespace = a.options.Client.Namespace
 	}
-	a.mu.RLock()
 	state.LastView = a.currentGVR.Resource
 	state.LastFilter = a.filter
 	a.mu.RUnlock()
 	if state.LastView == "" {
 		state.LastView = "pods"
 	}
+	state.AllNamespaces = state.Namespace == ""
 	return state
 }
 
@@ -289,14 +392,17 @@ func (a *App) applySkinUpdate(skin uitheme.Skin) {
 }
 
 func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr schema.GroupVersionResource, renderer views.Renderer) {
+	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
 	a.mu.RLock()
 	current := a.currentGVR
 	a.mu.RUnlock()
 	if current != gvr {
 		return
 	}
-	namespace := namespaceFor(client, gvr)
-	items, err := cache.List(gvr, namespace, labels.Everything())
+	namespaced := a.resourceNamespaced(gvr)
+	namespace := namespaceFor(client, gvr, namespaced)
+	items, err := cache.ListFor(gvr, namespaced, namespace, labels.Everything())
 	if err != nil {
 		return
 	}
@@ -322,23 +428,45 @@ func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr 
 
 func (a *App) updateTitle() {
 	a.mu.RLock()
-	resource := a.currentGVR.Resource
+	gvr := a.currentGVR
+	resource := gvr.Resource
+	filter := a.filter
+	cache := a.cache
+	info, discovered := a.resourceInfo[gvr]
+	client := cluster.Client{}
+	if a.options.Client != nil {
+		client = *a.options.Client
+	}
 	a.mu.RUnlock()
 	if resource == "" {
 		resource = "resources"
 	}
-	title := fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, resource)
-	a.mu.RLock()
-	filter := a.filter
-	a.mu.RUnlock()
+	namespace := client.Namespace
+	if namespace == "" {
+		namespace = "all"
+	}
+	title := fmt.Sprintf(" astrotui [%s/%s] %s ", client.Context, namespace, resource)
 	if filter != "" {
 		title += fmt.Sprintf(" filter=%q ", filter)
+	}
+	if cache != nil {
+		namespaced := !clusterScoped(gvr.Resource)
+		if discovered {
+			namespaced = info.Namespaced
+		}
+		state := cache.State(gvr, namespaced)
+		if state.Phase != "" {
+			title += fmt.Sprintf(" watch=%s ", state.Phase)
+		}
+	}
+	if client.ImpersonateUser != "" {
+		title += fmt.Sprintf(" as=%s ", client.ImpersonateUser)
 	}
 	a.table.SetTitle(title)
 }
 
 func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResource) bool {
-	renderer := rendererForGVR(gvr)
+	renderer := a.rendererForGVR(gvr)
 	if renderer == nil {
 		a.showMessage("Unknown resource", gvr.String())
 		return false
@@ -359,17 +487,19 @@ func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResourc
 	cache := a.cache
 	client := a.options.Client
 	a.mu.Unlock()
-	cache.Ensure(gvr)
+	namespaced := a.resourceNamespaced(gvr)
+	cache.EnsureFor(gvr, namespaced)
 	a.drawHeader(renderer)
-	events := cache.Subscribe(gvr)
+	subscription := cache.SubscribeFor(gvr, namespaced)
 	go func() {
-		cache.WaitForSync(watchCtx, gvr)
+		defer subscription.Cancel()
+		cache.WaitForSyncFor(watchCtx, gvr, namespaced)
 		a.refresh(cache, client, gvr, renderer)
 		for {
 			select {
 			case <-watchCtx.Done():
 				return
-			case <-events:
+			case <-subscription.Events:
 				a.refresh(cache, client, gvr, renderer)
 			}
 		}
@@ -430,7 +560,7 @@ func (a *App) showCommand(ctx context.Context) {
 			}
 			switch command.Kind {
 			case "resource":
-				gvr, ok := resourceCommand(command.Value)
+				gvr, ok := a.resolveResource(command.Value)
 				if !ok {
 					a.showMessage("Unknown command", ":"+input.GetText())
 					return
@@ -441,6 +571,9 @@ func (a *App) showCommand(ctx context.Context) {
 			case "port-forward-manager":
 				a.showPortForwardManager()
 				return
+			case "auth-summary":
+				a.showAuthSummary()
+				return
 			}
 		}
 		a.app.SetRoot(a.table, true)
@@ -450,16 +583,22 @@ func (a *App) showCommand(ctx context.Context) {
 
 func (a *App) switchNamespace(namespace string) {
 	namespace = strings.TrimSpace(namespace)
-	if namespace == "" {
-		return
+	if namespace == "all" || namespace == "*" {
+		namespace = ""
 	}
 	a.mu.Lock()
 	if a.options.Client == nil {
 		a.options.Client = &cluster.Client{}
 	}
-	a.options.Client.Namespace = namespace
+	clientSnapshot := *a.options.Client
+	clientSnapshot.Namespace = namespace
+	a.options.Client = &clientSnapshot
 	gvr, renderer := a.currentGVR, a.renderer
-	cache, client := a.cache, a.options.Client
+	client := &clientSnapshot
+	oldCacheCancel := a.cacheCancel
+	if client.Dynamic != nil {
+		a.cache, a.cacheCancel = a.newCache(client.Dynamic, namespace)
+	}
 	a.objects = nil
 	a.visibleObjects = nil
 	a.mu.Unlock()
@@ -468,8 +607,11 @@ func (a *App) switchNamespace(namespace string) {
 		a.drawHeader(renderer)
 	}
 	a.updateTitle()
-	if cache != nil && renderer != nil && gvr.Resource != "" {
-		a.refresh(cache, client, gvr, renderer)
+	if oldCacheCancel != nil {
+		oldCacheCancel()
+	}
+	if a.cache != nil && renderer != nil && gvr.Resource != "" {
+		a.switchResource(a.context(), gvr)
 	}
 }
 
@@ -482,12 +624,17 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	if a.options.Client != nil {
 		namespace = a.options.Client.Namespace
 	}
-	client, err := a.clientFactory()(ctx, cluster.ClientOptions{Context: contextName, Namespace: namespace})
+	client, err := a.clientFactory()(ctx, cluster.ClientOptions{
+		Context: contextName, Namespace: namespace, AllNamespaces: namespace == "",
+		ImpersonateUser: a.options.Client.ImpersonateUser, ImpersonateUID: a.options.Client.ImpersonateUID,
+		ImpersonateGroups: append([]string(nil), a.options.Client.ImpersonateGroups...),
+	})
 	if err != nil {
 		a.showMessage("Context switch failed", err.Error())
 		return false
 	}
-	newCache, newCacheCancel := a.newCache(client.Dynamic)
+	a.loadResourceInfo(client)
+	newCache, newCacheCancel := a.newCache(client.Dynamic, client.Namespace)
 	a.mu.Lock()
 	if a.resourceCancel != nil {
 		a.resourceCancel()
@@ -517,6 +664,61 @@ func (a *App) clientFactory() func(context.Context, cluster.ClientOptions) (*clu
 		return a.options.ClientFactory
 	}
 	return cluster.NewClient
+}
+
+func (a *App) showAuthSummary() {
+	a.mu.RLock()
+	client := a.options.Client
+	gvr := a.currentGVR
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage("Identity and RBAC", "Kubernetes client is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.context(), 8*time.Second)
+	defer cancel()
+	identity, identityErr := cluster.ReviewIdentity(ctx, client)
+	namespace := namespaceFor(client, gvr, a.resourceNamespaced(gvr))
+	allowed := make([]string, 0, 7)
+	denied := make([]string, 0, 7)
+	unknown := make([]string, 0, 7)
+	for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
+		ok, _, err := cluster.CanI(ctx, client, cluster.AccessRequest{Verb: verb, GVR: gvr, Namespace: namespace})
+		switch {
+		case err != nil:
+			unknown = append(unknown, verb)
+		case ok:
+			allowed = append(allowed, verb)
+		default:
+			denied = append(denied, verb)
+		}
+	}
+	displayNamespace := namespace
+	if displayNamespace == "" {
+		displayNamespace = "all / cluster-scoped"
+	}
+	lines := []string{
+		"Context: " + client.Context,
+		"Namespace: " + displayNamespace,
+		"Resource: " + gvr.String(),
+	}
+	if identityErr == nil {
+		lines = append(lines, "Username: "+identity.Username, "UID: "+identity.UID, "Groups: "+strings.Join(identity.Groups, ", "))
+	} else {
+		configured := client.ImpersonateUser
+		if configured == "" {
+			configured = "not reported"
+		}
+		lines = append(lines, "Username: "+configured, "Identity review: "+identityErr.Error())
+	}
+	lines = append(lines,
+		"Allowed: "+strings.Join(allowed, ", "),
+		"Denied: "+strings.Join(denied, ", "),
+	)
+	if len(unknown) > 0 {
+		lines = append(lines, "Unknown: "+strings.Join(unknown, ", "))
+	}
+	a.showMessage("Identity and RBAC", strings.Join(lines, "\n"))
 }
 
 func resolveSkin(options Options) uitheme.Skin {
@@ -550,7 +752,7 @@ func (a *App) showDelete() {
 	if obj == nil || a.renderer == nil {
 		return
 	}
-	req := deleteRequest(a.renderer.GVR(), obj)
+	req := a.boundActionRequest("delete", a.renderer.GVR(), obj)
 	if safety.RequiresConfirmation(a.options.Config, a.options.Client.Context, safety.Delete) {
 		a.showTypedDelete(req)
 		return
@@ -563,14 +765,14 @@ func (a *App) showEdit() {
 	if obj == nil || a.renderer == nil {
 		return
 	}
-	req := actionRequest("edit", a.renderer.GVR(), obj)
+	req := a.boundActionRequest("edit", a.renderer.GVR(), obj)
 	if safety.RequiresConfirmation(a.options.Config, a.options.Client.Context, safety.Edit) {
 		input := tview.NewInputField().
 			SetLabel(fmt.Sprintf("Type %s to edit %s/%s: ", a.options.Client.Context, req.Kind, req.ResourceName)).
 			SetFieldWidth(40)
 		input.SetDoneFunc(func(key tcell.Key) {
 			if key == tcell.KeyEnter {
-				a.confirmEdit(obj, input.GetText())
+				a.confirmEdit(req, obj, input.GetText())
 				return
 			}
 			a.app.SetRoot(a.table, true)
@@ -578,17 +780,38 @@ func (a *App) showEdit() {
 		a.app.SetRoot(input, true)
 		return
 	}
-	a.confirmEdit(obj, "")
+	a.confirmEdit(req, obj, "")
 }
 
-func (a *App) confirmEdit(obj *unstructured.Unstructured, confirmText string) {
-	if err := safety.Authorize(a.options.Config, a.options.Client.Context, safety.Edit, confirmText); err != nil {
+func (a *App) confirmEdit(req actions.Request, obj *unstructured.Unstructured, confirmText string) {
+	a.mu.RLock()
+	client := a.options.Client
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage("Edit failed", "Kubernetes client is unavailable")
+		return
+	}
+	if err := safety.Authorize(a.options.Config, client.Context, safety.Edit, confirmText); err != nil {
 		a.showMessage("Edit failed", err.Error())
 		return
 	}
-	var err error
+	accessCtx, accessCancel := context.WithTimeout(a.context(), 2*time.Second)
+	allowed, reason, err := cluster.CanI(accessCtx, client, accessRequestForAction(req))
+	accessCancel()
+	if err != nil {
+		a.showMessage("Edit failed", "RBAC preflight failed: "+err.Error())
+		return
+	}
+	if !allowed {
+		if reason == "" {
+			reason = "the active identity is not authorized"
+		}
+		a.showMessage("Edit failed", "RBAC denied: "+reason)
+		return
+	}
+	var plan actions.EditPlan
 	run := func() {
-		_, err = actions.EditResource(context.Background(), a.options.Client.Dynamic, a.renderer.GVR(), obj, a.options.Editor)
+		plan, err = actions.PrepareEdit(obj, a.options.Editor)
 	}
 	if !a.app.Suspend(run) {
 		run()
@@ -602,7 +825,49 @@ func (a *App) confirmEdit(obj *unstructured.Unstructured, confirmText string) {
 		a.showMessage("Edit failed", err.Error())
 		return
 	}
-	a.showMessage("Edited", fmt.Sprintf("edited %s/%s", fallbackKind(a.renderer.GVR().Resource), obj.GetName()))
+	if len(plan.Patch) == 0 {
+		a.showMessage("Edit unchanged", "No changes to apply")
+		return
+	}
+	previewCtx, previewCancel := context.WithTimeout(a.context(), 15*time.Second)
+	err = actions.PreviewEditPlan(previewCtx, client.Dynamic, req.GVR, plan)
+	previewCancel()
+	if err != nil {
+		a.showMessage("Edit preview failed", err.Error())
+		return
+	}
+	modal := tview.NewModal().
+		SetText("Server dry-run succeeded.\n\n" + boundedPreview(plan.Diff, 64<<10)).
+		AddButtons([]string{"Apply", "Cancel"})
+	modal.SetTitle(" Edit dry-run preview ")
+	modal.SetDoneFunc(func(index int, _ string) {
+		if index != 0 {
+			a.app.SetRoot(a.table, true)
+			return
+		}
+		applyCtx, applyCancel := context.WithTimeout(a.context(), 30*time.Second)
+		_, applyErr := actions.ApplyEditPlan(applyCtx, client.Dynamic, req.GVR, plan)
+		applyCancel()
+		if applyErr != nil {
+			var conflict *actions.EditConflictError
+			if errors.As(applyErr, &conflict) {
+				a.showMessage("Edit conflict", conflict.Diff)
+				return
+			}
+			a.showMessage("Edit failed", applyErr.Error())
+			return
+		}
+		a.showMessage("Edited", fmt.Sprintf("edited %s/%s", req.Kind, req.ResourceName))
+	})
+	a.app.SetRoot(modal, false)
+}
+
+func boundedPreview(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "�")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return strings.ToValidUTF8(value[:limit], "�") + "\n… preview truncated"
 }
 
 func (a *App) selectedPod() (corev1.Pod, bool) {
@@ -645,7 +910,7 @@ func (a *App) showScale() {
 	if obj == nil || a.renderer == nil {
 		return
 	}
-	req := actionRequest("scale", a.renderer.GVR(), obj)
+	req := a.boundActionRequest("scale", a.renderer.GVR(), obj)
 	if !scalableKind(req.Kind) {
 		a.showMessage("Scale unavailable", fmt.Sprintf("scale is not implemented for %s", req.Kind))
 		return
@@ -673,7 +938,7 @@ func (a *App) showRestart() {
 	if obj == nil || a.renderer == nil {
 		return
 	}
-	req := actionRequest("restart", a.renderer.GVR(), obj)
+	req := a.boundActionRequest("restart", a.renderer.GVR(), obj)
 	if !restartableKind(req.Kind) {
 		a.showMessage("Restart unavailable", fmt.Sprintf("restart is not implemented for %s", req.Kind))
 		return
@@ -709,18 +974,70 @@ func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitl
 }
 
 func (a *App) runAction(req actions.Request, successTitle, failureTitle string) {
-	executor := actions.Executor{
-		Clientset:      a.options.Client.Clientset,
-		Dynamic:        a.options.Client.Dynamic,
-		Config:         a.options.Config,
-		CurrentContext: a.options.Client.Context,
+	a.mu.RLock()
+	client := a.options.Client
+	a.mu.RUnlock()
+	if client == nil {
+		a.showMessage(failureTitle, "Kubernetes client is unavailable")
+		return
 	}
-	result, err := executor.Run(context.Background(), req)
+	executor := actions.Executor{
+		Clientset:      client.Clientset,
+		Dynamic:        client.Dynamic,
+		Config:         a.options.Config,
+		CurrentContext: client.Context,
+		RequireTarget:  true,
+	}
+	accessCtx, cancel := context.WithTimeout(a.context(), 2*time.Second)
+	allowed, reason, err := cluster.CanI(accessCtx, client, accessRequestForAction(req))
+	cancel()
+	if err != nil {
+		a.showMessage(failureTitle, "RBAC preflight failed: "+err.Error())
+		return
+	}
+	if !allowed {
+		if reason == "" {
+			reason = "the active identity is not authorized"
+		}
+		a.showMessage(failureTitle, "RBAC denied: "+reason)
+		return
+	}
+	previewCtx, previewCancel := context.WithTimeout(a.context(), 15*time.Second)
+	preview, err := executor.Preview(previewCtx, req)
+	previewCancel()
 	if err != nil {
 		a.showMessage(failureTitle, err.Error())
 		return
 	}
-	a.showMessage(successTitle, result.Message)
+	body := preview.Summary
+	if preview.Patch != "" {
+		body += "\n\nPatch:\n" + preview.Patch
+	}
+	modal := tview.NewModal().SetText(body).AddButtons([]string{"Apply", "Cancel"})
+	modal.SetTitle(" Dry-run preview ")
+	modal.SetDoneFunc(func(index int, _ string) {
+		if index != 0 {
+			a.app.SetRoot(a.table, true)
+			return
+		}
+		runCtx, runCancel := context.WithTimeout(a.context(), 30*time.Second)
+		result, runErr := executor.Run(runCtx, req)
+		runCancel()
+		if runErr != nil {
+			a.showMessage(failureTitle, runErr.Error())
+			return
+		}
+		a.showMessage(successTitle, result.Message)
+	})
+	a.app.SetRoot(modal, false)
+}
+
+func accessRequestForAction(req actions.Request) cluster.AccessRequest {
+	verb := "patch"
+	if req.Name == "delete" {
+		verb = "delete"
+	}
+	return cluster.AccessRequest{Verb: verb, GVR: req.Target.GVR, Namespace: req.Target.Namespace, Name: req.Target.Name}
 }
 
 func (a *App) showMessage(title, body string) {
@@ -811,7 +1128,7 @@ func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 }
 
 func (a *App) namespaceNames() []string {
-	names := map[string]struct{}{}
+	names := map[string]struct{}{"all": {}}
 	if a.options.Client != nil && a.options.Client.Namespace != "" {
 		names[a.options.Client.Namespace] = struct{}{}
 	}
@@ -831,8 +1148,8 @@ func (a *App) namespaceNames() []string {
 	return out
 }
 
-func namespaceFor(client *cluster.Client, gvr schema.GroupVersionResource) string {
-	if clusterScoped(gvr.Resource) {
+func namespaceFor(client *cluster.Client, _ schema.GroupVersionResource, namespaced bool) string {
+	if !namespaced {
 		return ""
 	}
 	if client == nil {
@@ -848,6 +1165,7 @@ func HelpText(catalog []actions.Action) string {
 	}
 	lines = append(lines, "Ctrl+P  palette - Search resources, actions, contexts, namespaces, plugins")
 	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
+	lines = append(lines, ":auth  identity - Show active server identity and RBAC verbs for the current resource")
 	lines = append(lines, "/  filter - Filter visible rows")
 	lines = append(lines, "Shift+1..9  sort - Sort by column")
 	lines = append(lines, "?  help - Show this overlay")
@@ -864,12 +1182,26 @@ func actionRequest(name string, gvr schema.GroupVersionResource, obj *unstructur
 		kind = fallbackKind(gvr.Resource)
 	}
 	return actions.Request{
+		Target: actions.Target{
+			GVR:             gvr,
+			Kind:            kind,
+			Namespace:       obj.GetNamespace(),
+			Name:            obj.GetName(),
+			UID:             obj.GetUID(),
+			ResourceVersion: obj.GetResourceVersion(),
+		},
 		Name:         name,
 		Kind:         kind,
 		Namespace:    obj.GetNamespace(),
 		ResourceName: obj.GetName(),
 		GVR:          gvr,
 	}
+}
+
+func (a *App) boundActionRequest(name string, gvr schema.GroupVersionResource, obj *unstructured.Unstructured) actions.Request {
+	req := actionRequest(name, gvr, obj)
+	req.Target.Context = a.currentContext()
+	return req
 }
 
 func fallbackKind(resource string) string {
