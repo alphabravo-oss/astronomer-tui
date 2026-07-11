@@ -9,10 +9,11 @@ import (
 )
 
 type State struct {
-	Context    string `json:"context"`
-	Namespace  string `json:"namespace"`
-	LastView   string `json:"lastView"`
-	LastFilter string `json:"lastFilter"`
+	Context       string `json:"context"`
+	Namespace     string `json:"namespace"`
+	AllNamespaces bool   `json:"allNamespaces,omitempty"`
+	LastView      string `json:"lastView"`
+	LastFilter    string `json:"lastFilter"`
 }
 
 type Store struct {

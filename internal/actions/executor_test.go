@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -9,8 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/alphabravo-oss/astrotui/internal/config"
 )
@@ -155,6 +158,57 @@ func TestExecutorRejectsInvalidScaleAndUnknownAction(t *testing.T) {
 	if _, err := executor.Run(context.Background(), Request{Name: "unknown"}); err == nil {
 		t.Fatal("expected unknown action error")
 	}
+}
+
+func TestExecutorRejectsChangedImmutableTarget(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	obj := namedUnstructured("ConfigMap", "settings", "default", "new-uid", "2")
+	executor := Executor{
+		Dynamic:        dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj),
+		Config:         config.Default(),
+		CurrentContext: "dev",
+		RequireTarget:  true,
+	}
+	_, err := executor.Run(context.Background(), Request{Name: "delete", Target: Target{
+		Context: "dev", GVR: gvr, Kind: "ConfigMap", Namespace: "default", Name: "settings", UID: "old-uid", ResourceVersion: "1",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "action target changed") {
+		t.Fatalf("expected immutable target rejection, got %v", err)
+	}
+}
+
+func TestExecutorDeletePreviewUsesServerDryRun(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	obj := namedUnstructured("ConfigMap", "settings", "default", "uid-1", "1")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj)
+	var sawDryRun bool
+	dynamicClient.PrependReactor("delete", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		deleteAction := action.(ktesting.DeleteAction)
+		dryRun := deleteAction.GetDeleteOptions().DryRun
+		sawDryRun = len(dryRun) == 1 && dryRun[0] == metav1.DryRunAll
+		return true, nil, nil
+	})
+	executor := Executor{Dynamic: dynamicClient, Config: config.Default(), CurrentContext: "dev", RequireTarget: true}
+	preview, err := executor.Preview(context.Background(), Request{Name: "delete", Target: Target{
+		Context: "dev", GVR: gvr, Kind: "ConfigMap", Namespace: "default", Name: "settings", UID: "uid-1", ResourceVersion: "1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawDryRun || !strings.Contains(preview.Summary, "Dry-run") {
+		t.Fatalf("expected server dry-run preview, got %#v", preview)
+	}
+}
+
+func namedUnstructured(kind, name, namespace string, uid types.UID, resourceVersion string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind(kind)
+	obj.SetName(name)
+	obj.SetNamespace(namespace)
+	obj.SetUID(uid)
+	obj.SetResourceVersion(resourceVersion)
+	return obj
 }
 
 func ptr[T any](v T) *T {

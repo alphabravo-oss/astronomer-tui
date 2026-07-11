@@ -312,6 +312,25 @@ func TestActionRequestForWorkload(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAliasesAndVerbsDriveAvailableActions(t *testing.T) {
+	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+	app := New(Options{})
+	app.currentGVR = gvr
+	app.resourceAliases = map[string]schema.GroupVersionResource{"wdg": gvr, "widgets": gvr}
+	app.resourceInfo = map[schema.GroupVersionResource]cluster.ResourceInfo{
+		gvr: {GVR: gvr, Kind: "Widget", Namespaced: true, Verbs: map[string]struct{}{"get": {}, "patch": {}}},
+	}
+	resolved, ok := app.resolveResource("wdg")
+	if !ok || resolved != gvr {
+		t.Fatalf("expected discovered short name, got %v %v", resolved, ok)
+	}
+	for _, action := range app.actionCatalog() {
+		if action.Name == "delete" {
+			t.Fatal("delete should be hidden when discovery does not advertise it")
+		}
+	}
+}
+
 func TestExecutePaletteNamespaceEntry(t *testing.T) {
 	app := New(Options{})
 	if !app.executePaletteEntry(palette.Entry{ID: "namespace:kube-system", Title: "kube-system", Category: palette.Namespaces}) {

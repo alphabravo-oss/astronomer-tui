@@ -96,11 +96,32 @@ func StatefulSetRestartAnnotation(s appsv1.StatefulSet) string {
 }
 
 func DeleteResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
+	return deleteResource(ctx, client, gvr, namespace, name, metav1.DeleteOptions{})
+}
+
+func DeleteResourceBound(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, uid types.UID, resourceVersion string) error {
+	options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}}
+	return deleteResource(ctx, client, gvr, namespace, name, options)
+}
+
+func deleteResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, options metav1.DeleteOptions) error {
 	resource := client.Resource(gvr)
 	if namespace != "" {
-		return resource.Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+		return resource.Namespace(namespace).Delete(ctx, name, options)
 	}
-	return resource.Delete(ctx, name, metav1.DeleteOptions{})
+	return resource.Delete(ctx, name, options)
+}
+
+func DeleteResourceDryRun(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, uid types.UID, resourceVersion string) error {
+	options := metav1.DeleteOptions{DryRun: []string{metav1.DryRunAll}}
+	if uid != "" || resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}
+	}
+	resource := client.Resource(gvr)
+	if namespace != "" {
+		return resource.Namespace(namespace).Delete(ctx, name, options)
+	}
+	return resource.Delete(ctx, name, options)
 }
 
 func YAMLForEdit(obj *unstructured.Unstructured) ([]byte, error) {
@@ -136,6 +157,17 @@ func PatchResource(ctx context.Context, client dynamic.Interface, gvr schema.Gro
 		return resource.Namespace(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 	}
 	return resource.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+}
+
+func PatchResourceDryRun(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, patch []byte) error {
+	resource := client.Resource(gvr)
+	options := metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
+	if namespace != "" {
+		_, err := resource.Namespace(namespace).Patch(ctx, name, types.MergePatchType, patch, options)
+		return err
+	}
+	_, err := resource.Patch(ctx, name, types.MergePatchType, patch, options)
+	return err
 }
 
 func strategicMergePatch(originalJSON, editedJSON []byte) ([]byte, error) {
