@@ -65,6 +65,7 @@ func CatalogFor(kind string) []Action {
 		return append(common,
 			Action{Name: "exec", Key: "x", Description: "Exec into pod", Destructive: true},
 			Action{Name: "attach", Key: "A", Description: "Attach to the running container", Destructive: true},
+			Action{Name: "copy", Key: "c", Description: "Copy files to or from a container", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open pod logs"},
 			Action{Name: "port-forward", Key: "f", Description: "Forward a pod port", Destructive: true},
 		)

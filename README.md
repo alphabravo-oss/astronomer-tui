@@ -98,6 +98,7 @@ Eight phases, 43 user stories. See the [spec](docs/specs/i-want-to-make-a-clone-
 - Built-in and generic renderers for the k9s resource families listed in the spec.
 - Fuzzy command palette index plus resource/action/context/namespace/plugin entry builders.
 - Config loader, k9s import command, session persistence, prod-context safety guard.
+- Container-aware exec/attach and bounded two-way Pod copy, managed port-forwards, and loopback-only HTTP benchmarks.
 - Log parsing/filtering helpers, AI provider interface/mock/Ollama HTTP path, plugin loader, theme defaults, and port-forward manager model.
 - GoReleaser, install script, container image, and CI scaffolding.
 

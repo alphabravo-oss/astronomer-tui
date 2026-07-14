@@ -92,6 +92,32 @@ func (m *PortForwardManager) Kill(id string) bool {
 	return ok
 }
 
+func (m *PortForwardManager) Remove(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.forwards[id]; !ok {
+		return false
+	}
+	delete(m.forwards, id)
+	return true
+}
+
+func (m *PortForwardManager) StopAll() int {
+	m.mu.Lock()
+	forwards := make([]PortForward, 0, len(m.forwards))
+	for _, forward := range m.forwards {
+		forwards = append(forwards, forward)
+	}
+	clear(m.forwards)
+	m.mu.Unlock()
+	for _, forward := range forwards {
+		if forward.stop != nil {
+			forward.stop()
+		}
+	}
+	return len(forwards)
+}
+
 func DefaultPodForwards(pod corev1.Pod) []PortForwardSpec {
 	specs := make([]PortForwardSpec, 0)
 	for _, container := range pod.Spec.Containers {
@@ -223,10 +249,12 @@ func RunPortForward(ctx context.Context, cfg *rest.Config, client kubernetes.Int
 		Name(podName).
 		SubResource("portforward")
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", request.URL())
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stopCh := make(chan struct{})
 	readyCh := make(chan struct{})
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		close(stopCh)
 	}()
 	forwarder, err := portforward.New(dialer, []string{fmt.Sprintf("%d:%d", spec.Local, spec.Remote)}, stopCh, readyCh, out, errOut)

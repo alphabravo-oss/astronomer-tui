@@ -49,8 +49,11 @@ type Options struct {
 	Editor          actions.Editor
 	ExecRunner      func(context.Context, actions.ExecTarget) error
 	AttachRunner    func(context.Context, actions.AttachTarget) error
+	CopyRunner      func(context.Context, actions.CopySpec) error
 	PortForwards    *actions.PortForwardManager
 	PortForwardRun  func(context.Context, actions.PortForwardSpec) error
+	Benchmarks      *actions.BenchmarkManager
+	BenchmarkRunner actions.BenchmarkRunner
 	AIProvider      ai.LLMProvider
 	LogStreamer     func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
 	Version         string
@@ -182,6 +185,10 @@ func (a *App) Run(ctx context.Context) error {
 			a.safe(a.showAttachPlan)
 			return nil
 		}
+		if event.Rune() == 'c' {
+			a.safe(a.showCopyPlan)
+			return nil
+		}
 		if event.Rune() == 'f' {
 			a.safe(a.showPortForwardPlan)
 			return nil
@@ -210,6 +217,12 @@ func (a *App) Run(ctx context.Context) error {
 	})
 	a.showSplash(ctx)
 	err := a.app.Run()
+	if a.options.PortForwards != nil {
+		a.options.PortForwards.StopAll()
+	}
+	if a.options.Benchmarks != nil {
+		a.options.Benchmarks.StopAll()
+	}
 	if a.cacheCancel != nil {
 		a.cacheCancel()
 	}
@@ -618,6 +631,9 @@ func (a *App) showCommand(ctx context.Context) {
 			case "health":
 				a.showHealth()
 				return
+			case "benchmark-manager":
+				a.showBenchmarkManager()
+				return
 			}
 		}
 		a.app.SetRoot(a.table, true)
@@ -665,17 +681,27 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 		return false
 	}
 	namespace := ""
+	var impersonateUser, impersonateUID string
+	var impersonateGroups []string
 	if a.options.Client != nil {
 		namespace = a.options.Client.Namespace
+		impersonateUser = a.options.Client.ImpersonateUser
+		impersonateUID = a.options.Client.ImpersonateUID
+		impersonateGroups = append([]string(nil), a.options.Client.ImpersonateGroups...)
 	}
 	client, err := a.clientFactory()(ctx, cluster.ClientOptions{
 		Context: contextName, Namespace: namespace, AllNamespaces: namespace == "",
-		ImpersonateUser: a.options.Client.ImpersonateUser, ImpersonateUID: a.options.Client.ImpersonateUID,
-		ImpersonateGroups: append([]string(nil), a.options.Client.ImpersonateGroups...),
+		ImpersonateUser: impersonateUser, ImpersonateUID: impersonateUID, ImpersonateGroups: impersonateGroups,
 	})
 	if err != nil {
 		a.showMessage("Context switch failed", err.Error())
 		return false
+	}
+	if a.options.PortForwards != nil {
+		a.options.PortForwards.StopAll()
+	}
+	if a.options.Benchmarks != nil {
+		a.options.Benchmarks.StopAll()
 	}
 	a.loadResourceInfo(client)
 	newCache, newCacheCancel := a.newCache(client.Dynamic, client.Namespace)
@@ -1288,6 +1314,7 @@ func HelpText(catalog []actions.Action) string {
 	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
 	lines = append(lines, ":auth  identity - Show active server identity and RBAC verbs for the current resource")
 	lines = append(lines, ":health  pulses - Show bounded cluster health and problem summary")
+	lines = append(lines, ":pf / :bench  operations - Manage port-forwards and loopback HTTP benchmarks")
 	lines = append(lines, "y/v/o/g/z  navigation - YAML, events, owner, related resources, and xray graph")
 	lines = append(lines, "L  advanced logs - Configure tail, since, previous, timestamps, and follow")
 	lines = append(lines, "/  filter - Filter visible rows")

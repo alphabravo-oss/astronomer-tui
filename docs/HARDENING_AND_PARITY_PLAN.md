@@ -48,11 +48,13 @@ Wave 2 includes discovery-driven preferred-resource aliases and mutation availab
 - [ ] Complete built-in resource/action matrix, including Jobs/CronJobs, DaemonSets, RBAC, storage, networking, autoscaling, and CRDs.
 - [x] Describe/events/YAML views, owner navigation, resource graph/xray, and related-resource jumps.
 - [x] Multi-container logs with previous logs, timestamps, since/tail, wrap, search, save, and workload aggregation.
-- [ ] Shell/exec container selection, copy, attach, port-forward lifecycle, and benchmark management.
+- [x] Shell/exec container selection, copy, attach, port-forward lifecycle, and benchmark management.
 - [ ] Context/namespace/all-namespaces switching, aliases, hotkeys, skins, columns, plugins, and read-only mode compatibility.
 - [ ] Pulses/health views and optional vulnerability/image scanning without sending cluster data externally by default.
 
 Wave 3 adds generic describe/YAML/events views, controller-owner jumps, related-resource menus, bounded owner/xray graphs, all-container workload logs with advanced request options, DaemonSet restart/log actions, Job and CronJob suspend/resume previews, Pod attach with RBAC preflight, and a bounded `:health` pulse view. Copy workflows, benchmark management, image scanning, and the remaining compatibility matrix stay open.
+
+Wave 4 closes the interactive Pod I/O and port-forward operations row. Pod copy supports upload and download with explicit container selection, `pods/exec` RBAC preflight, context safety policy, non-TTY binary streams, absolute remote paths, private local staging with no-overwrite installation, and file-count/byte limits. Tar traversal, links, devices, and local special files are rejected. Port-forwards now self-remove after completion and stop on context switch or application exit. Active forwards can launch bounded, cancellable, loopback-only native HTTP benchmarks; `:bench` shows latency, status-code, failure, and lifecycle results without executing an external benchmark binary. Unit/race coverage and a real kind upload/download golden path enforce the contracts.
 
 ## Phase 3 — differentiated capabilities
 
@@ -79,7 +81,7 @@ Track each row as `missing`, `partial`, `parity`, or `better`, with an automated
 | Navigation and search | Partial/better concept | Bounded global palette plus owner/related-resource navigation. |
 | Mutation safety | Partial | Immutable target binding, policy enforcement, preview, conflict handling, and audit record. |
 | Logs | Partial | Bounded multi-pod streaming with the operational controls listed above. |
-| Exec/port-forward | Partial | Full container/Service resolution, policy enforcement, lifecycle cleanup, and E2E coverage. |
+| Exec/port-forward | Parity for core workflows | Container/Service resolution, policy enforcement, bounded copy, lifecycle cleanup, benchmarks, and E2E coverage remain green. |
 | Configuration/plugins | Partial | k9s compatibility corpus plus secure execution contract. |
 | Observability/health | Missing | Pulses, resource graph, and health/problem summaries. |
 | Distribution | Partial | Verified installer, signed images, SBOM/provenance, and package managers. |

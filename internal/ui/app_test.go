@@ -177,6 +177,10 @@ func TestParseNamespaceCommand(t *testing.T) {
 	if !ok || cmd.Kind != "port-forward-manager" {
 		t.Fatalf("unexpected command %#v %v", cmd, ok)
 	}
+	cmd, ok = parseCommand(":bench")
+	if !ok || cmd.Kind != "benchmark-manager" {
+		t.Fatalf("unexpected benchmark command %#v %v", cmd, ok)
+	}
 	if _, ok := parseCommand(":namespace"); ok {
 		t.Fatal("namespace command should require a value")
 	}
@@ -517,13 +521,68 @@ func TestExecutePaletteOperationalActions(t *testing.T) {
 		}}},
 	})
 	pod.SetKind("Pod")
-	for _, action := range []string{"logs", "exec", "port-forward"} {
+	for _, action := range []string{"logs", "exec", "copy", "port-forward"} {
 		app := New(Options{PortForwards: actions.NewPortForwardManager()})
 		app.visibleObjects = []*unstructured.Unstructured{pod}
 		app.table.Select(1, 0)
 		if !app.executePaletteEntry(palette.Entry{ID: "action:" + action, Title: action, Category: palette.Actions}) {
 			t.Fatalf("expected %s action to execute", action)
 		}
+	}
+}
+
+func TestCopyRunnerHonorsSafetyAndSelectedContainer(t *testing.T) {
+	pod := unstructuredFrom(t, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	})
+	pod.SetKind("Pod")
+	cfg := config.Default()
+	cfg.Contexts = map[string]config.ContextConfig{"dev": {Policy: "full"}, "locked": {Policy: "read-only"}}
+	var got actions.CopySpec
+	app := New(Options{
+		Client: &cluster.Client{Context: "dev", Namespace: "default"}, Config: cfg,
+		CopyRunner: func(_ context.Context, spec actions.CopySpec) error { got = spec; return nil },
+	})
+	app.visibleObjects = []*unstructured.Unstructured{pod}
+	app.table.Select(1, 0)
+	spec := actions.CopySpec{Direction: actions.CopyFromPod, Namespace: "default", Pod: "api", Container: "app", RemotePath: "/tmp/data", LocalPath: t.TempDir()}
+	app.runCopy("", spec)
+	if got.Pod != "api" || got.Container != "app" || got.Direction != actions.CopyFromPod {
+		t.Fatalf("unexpected copy target %#v", got)
+	}
+	app.options.Client.Context = "locked"
+	got = actions.CopySpec{}
+	app.runCopy("", spec)
+	if got.Pod != "" {
+		t.Fatalf("read-only context ran copy %#v", got)
+	}
+}
+
+func TestBenchmarkInputsStayBoundToLoopbackForward(t *testing.T) {
+	forward := actions.PortForward{ID: "pf-1", Local: 18080, Resource: "pod/api"}
+	spec, err := benchmarkSpecFromInputs(forward, "/health?full=1", "25", "5", "2s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.URL != "http://127.0.0.1:18080/health?full=1" || spec.Requests != 25 || spec.Concurrency != 5 || spec.Timeout != 2*time.Second {
+		t.Fatalf("unexpected benchmark spec %#v", spec)
+	}
+	for _, unsafe := range []string{"https://example.com/", "//example.com/", "relative"} {
+		if _, err := benchmarkSpecFromInputs(forward, unsafe, "10", "2", "1s"); err == nil {
+			t.Fatalf("expected unsafe path rejection for %q", unsafe)
+		}
+	}
+}
+
+func TestRenderBenchmarkRowsAndSelection(t *testing.T) {
+	table := tview.NewTable().SetSelectable(true, false)
+	runs := []actions.Benchmark{{ID: "bench-2", Status: "running"}, {ID: "bench-1", Status: "completed", Result: actions.BenchmarkResult{Completed: 10}}}
+	renderBenchmarkRows(table, runs)
+	table.Select(1, 0)
+	run, ok := benchmarkAt(table, runs)
+	if !ok || run.ID != "bench-1" {
+		t.Fatalf("unexpected selected benchmark %#v ok=%v", run, ok)
 	}
 }
 

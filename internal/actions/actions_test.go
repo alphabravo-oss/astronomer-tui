@@ -21,7 +21,7 @@ var errTestConflict = errors.New("resource version changed")
 
 func TestCatalogForWorkload(t *testing.T) {
 	actions := CatalogFor("Deployment")
-	var restart, servicePF, podExec, commonDelete bool
+	var restart, servicePF, podExec, podCopy, commonDelete bool
 	for _, action := range actions {
 		if action.Name == "restart" && action.Destructive {
 			restart = true
@@ -36,14 +36,17 @@ func TestCatalogForWorkload(t *testing.T) {
 		if action.Name == "exec" {
 			podExec = true
 		}
+		if action.Name == "copy" {
+			podCopy = true
+		}
 	}
 	for _, action := range CatalogFor("ConfigMap") {
 		if action.Name == "delete" {
 			commonDelete = true
 		}
 	}
-	if !restart || !servicePF || !podExec || !commonDelete {
-		t.Fatalf("unexpected catalog coverage restart=%v servicePF=%v podExec=%v commonDelete=%v", restart, servicePF, podExec, commonDelete)
+	if !restart || !servicePF || !podExec || !podCopy || !commonDelete {
+		t.Fatalf("unexpected catalog coverage restart=%v servicePF=%v podExec=%v podCopy=%v commonDelete=%v", restart, servicePF, podExec, podCopy, commonDelete)
 	}
 	for kind, expected := range map[string][]string{
 		"DaemonSet": {"restart", "logs"}, "Job": {"suspend", "resume", "logs"}, "CronJob": {"suspend", "resume"},

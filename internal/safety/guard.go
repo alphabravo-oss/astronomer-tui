@@ -16,6 +16,7 @@ const (
 	Scale       Verb = "scale"
 	Restart     Verb = "restart"
 	Exec        Verb = "exec-into-prod-pod"
+	Copy        Verb = "copy-pod-files"
 	Edit        Verb = "edit"
 	Patch       Verb = "patch"
 	Plugin      Verb = "plugin"
@@ -58,7 +59,7 @@ func Authorize(cfg config.Config, currentContext string, verb Verb, typed string
 
 func destructive(verb Verb) bool {
 	switch verb {
-	case Delete, Scale, Restart, Exec, Edit, Patch, Plugin, PortForward:
+	case Delete, Scale, Restart, Exec, Copy, Edit, Patch, Plugin, PortForward:
 		return true
 	default:
 		return false
