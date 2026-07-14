@@ -1066,6 +1066,11 @@ func TestBuildRowsFiltersAndSortsVisibleObjects(t *testing.T) {
 	if len(rows) != 3 || visible[0].GetName() != "worker" || visible[2].GetName() != "api" {
 		t.Fatalf("expected descending sort, rows=%#v visible=%#v", rows, visible)
 	}
+	namespaceFirst := views.GenericRenderer{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Columns: []string{"NAMESPACE", "NAME"}}
+	_, visible = buildRows(namespaceFirst, []*unstructured.Unstructured{worker, api}, "", 0, false)
+	if visible[0].GetName() != "api" || visible[1].GetName() != "worker" {
+		t.Fatalf("expected deterministic identity tie-breaker, got %s/%s", visible[0].GetName(), visible[1].GetName())
+	}
 }
 
 func TestSwitchResourceAppliesCacheUpdates(t *testing.T) {

@@ -1383,12 +1383,16 @@ func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, fi
 	}
 	sort.SliceStable(pairs, func(i, j int) bool {
 		if sortCol >= len(pairs[i].row) || sortCol >= len(pairs[j].row) {
-			return false
+			return rowObjectSortKey(pairs[i].obj) < rowObjectSortKey(pairs[j].obj)
 		}
-		if sortDesc {
-			return pairs[i].row[sortCol].Text > pairs[j].row[sortCol].Text
+		left, right := pairs[i].row[sortCol].Text, pairs[j].row[sortCol].Text
+		if left != right {
+			if sortDesc {
+				return left > right
+			}
+			return left < right
 		}
-		return pairs[i].row[sortCol].Text < pairs[j].row[sortCol].Text
+		return rowObjectSortKey(pairs[i].obj) < rowObjectSortKey(pairs[j].obj)
 	})
 	rows := make([][]views.Cell, len(pairs))
 	visible := make([]*unstructured.Unstructured, len(pairs))
@@ -1397,6 +1401,13 @@ func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, fi
 		visible[i] = pair.obj
 	}
 	return rows, visible
+}
+
+func rowObjectSortKey(obj *unstructured.Unstructured) string {
+	if obj == nil {
+		return ""
+	}
+	return obj.GetNamespace() + "\x00" + obj.GetName() + "\x00" + string(obj.GetUID())
 }
 
 func rowMatches(row []views.Cell, query string) bool {
