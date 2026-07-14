@@ -143,12 +143,16 @@ func (a *App) startPortForwardSpecWithConfirmation(spec actions.PortForwardSpec,
 		manager = actions.NewPortForwardManager()
 		a.options.PortForwards = manager
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(a.context())
 	a.mu.RLock()
 	client := a.options.Client
 	a.mu.RUnlock()
-	go a.runPortForward(ctx, client, spec)
-	manager.Add(actions.NewPortForward(spec, cancel))
+	forward := actions.NewPortForward(spec, cancel)
+	manager.Add(forward)
+	go func() {
+		defer manager.Remove(forward.ID)
+		a.runPortForward(ctx, client, spec)
+	}()
 	a.showMessage("Port-forward", fmt.Sprintf("%s %d:%s", spec.Resource, spec.Local, spec.RemoteTarget()))
 }
 
@@ -171,7 +175,7 @@ func (a *App) showPortForwardManager() {
 		a.options.PortForwards = manager
 	}
 	table := tview.NewTable().SetSelectable(true, false)
-	table.SetTitle(" Port-forwards ").SetBorder(true)
+	table.SetTitle(" Port-forwards (Ctrl+B benchmark, d stop) ").SetBorder(true)
 	renderPortForwardRows(table, manager.List())
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
@@ -181,6 +185,11 @@ func (a *App) showPortForwardManager() {
 		case event.Key() == tcell.KeyCtrlK || event.Rune() == 'k' || event.Rune() == 'd':
 			if killSelectedPortForward(table, manager) {
 				renderPortForwardRows(table, manager.List())
+			}
+			return nil
+		case event.Key() == tcell.KeyCtrlB || event.Rune() == 'b':
+			if forward, ok := portForwardAt(table, manager.List()); ok {
+				a.showBenchmarkForm(forward)
 			}
 			return nil
 		}
@@ -222,13 +231,21 @@ func portForwardRemote(forward actions.PortForward) string {
 }
 
 func portForwardIDAt(table *tview.Table, forwards []actions.PortForward) string {
+	forward, ok := portForwardAt(table, forwards)
+	if !ok {
+		return ""
+	}
+	return forward.ID
+}
+
+func portForwardAt(table *tview.Table, forwards []actions.PortForward) (actions.PortForward, bool) {
 	row, _ := table.GetSelection()
 	index := row - 1
 	if index < 0 || index >= len(forwards) {
-		return ""
+		return actions.PortForward{}, false
 	}
 	sort.SliceStable(forwards, func(i, j int) bool { return forwards[i].ID < forwards[j].ID })
-	return forwards[index].ID
+	return forwards[index], true
 }
 
 func killSelectedPortForward(table *tview.Table, manager *actions.PortForwardManager) bool {

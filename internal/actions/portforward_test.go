@@ -27,6 +27,22 @@ func TestPortForwardManager(t *testing.T) {
 	}
 }
 
+func TestPortForwardManagerRemoveAndStopAll(t *testing.T) {
+	manager := NewPortForwardManager()
+	stopped := 0
+	manager.Add(PortForward{ID: "one", stop: func() { stopped++ }})
+	manager.Add(PortForward{ID: "two", stop: func() { stopped++ }})
+	if !manager.Remove("one") || manager.Remove("missing") {
+		t.Fatal("unexpected remove result")
+	}
+	if got := manager.StopAll(); got != 1 || stopped != 1 || len(manager.List()) != 0 {
+		t.Fatalf("unexpected stop-all count=%d stopped=%d forwards=%#v", got, stopped, manager.List())
+	}
+	if manager.StopAll() != 0 {
+		t.Fatal("stop-all must be idempotent")
+	}
+}
+
 func TestDefaultPodForwards(t *testing.T) {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},

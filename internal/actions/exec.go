@@ -65,6 +65,12 @@ func NeedsContainerPicker(pod corev1.Pod) bool {
 }
 
 func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, target ExecTarget, stdin io.Reader, stdout, stderr io.Writer) error {
+	return RunExecStream(ctx, cfg, client, target, stdin, stdout, stderr, stdin != nil)
+}
+
+// RunExecStream runs a non-shell-expanded command in a Pod container. Callers
+// carrying binary streams (for example, tar archives) must set tty=false.
+func RunExecStream(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, target ExecTarget, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
 	if cfg == nil {
 		return fmt.Errorf("rest config is required for exec")
 	}
@@ -82,7 +88,7 @@ func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface,
 			Stdin:     stdin != nil,
 			Stdout:    stdout != nil,
 			Stderr:    stderr != nil,
-			TTY:       stdin != nil,
+			TTY:       tty,
 		}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(cfg, http.MethodPost, request.URL())
 	if err != nil {
@@ -92,7 +98,7 @@ func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface,
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stderr,
-		Tty:    stdin != nil,
+		Tty:    tty,
 	})
 }
 

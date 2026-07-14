@@ -40,6 +40,11 @@ func parseCommand(input string) (Command, bool) {
 			return Command{}, false
 		}
 		return Command{Kind: "health"}, true
+	case "be", "bench", "benchmarks":
+		if len(parts) != 1 {
+			return Command{}, false
+		}
+		return Command{Kind: "benchmark-manager"}, true
 	default:
 		return Command{Kind: "resource", Value: parts[0]}, true
 	}

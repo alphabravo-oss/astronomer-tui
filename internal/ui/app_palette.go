@@ -210,6 +210,8 @@ func (a *App) executeActionEntry(entry palette.Entry) bool {
 		a.showExecPlan()
 	case "attach":
 		a.showAttachPlan()
+	case "copy":
+		a.showCopyPlan()
 	case "port-forward":
 		a.showPortForwardPlan()
 	case "describe":

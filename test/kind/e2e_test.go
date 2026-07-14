@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,6 +255,29 @@ func TestExecAndPortForwardGoldenPath(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "astrotui-exec-golden") {
 		t.Fatalf("unexpected exec stdout %q stderr=%q", stdout.String(), stderr.String())
+	}
+	copyExec := func(ctx context.Context, target actions.ExecTarget, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
+		return actions.RunExecStream(ctx, client.Config, client.Clientset, target, stdin, stdout, stderr, tty)
+	}
+	uploadDir := t.TempDir()
+	upload := filepath.Join(uploadDir, "payload.txt")
+	if err := os.WriteFile(upload, []byte("astrotui-copy-golden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	copyTarget := actions.CopySpec{Direction: actions.CopyToPod, Namespace: namespace, Pod: "shell", Container: "main", LocalPath: upload, RemotePath: "/tmp", MaxBytes: 1024, MaxFiles: 4}
+	if err := actions.CopyToContainer(ctx, copyExec, copyTarget); err != nil {
+		t.Fatalf("copy to container failed: %v", err)
+	}
+	downloadDir := t.TempDir()
+	copyTarget.Direction = actions.CopyFromPod
+	copyTarget.LocalPath = downloadDir
+	copyTarget.RemotePath = "/tmp/payload.txt"
+	if err := actions.CopyFromContainer(ctx, copyExec, copyTarget); err != nil {
+		t.Fatalf("copy from container failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(downloadDir, "payload.txt"))
+	if err != nil || string(data) != "astrotui-copy-golden\n" {
+		t.Fatalf("unexpected copied file %q err=%v", data, err)
 	}
 	localPort := freeLocalPort(t)
 	forwardCtx, forwardCancel := context.WithCancel(ctx)
