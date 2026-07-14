@@ -46,7 +46,7 @@ What we want to do better than k9s:
 2. **Optional, configurable AI assistant** — explain failures (Crash/OOM/ImagePull), summarize logs, lint manifests, and translate natural-language intent into actions. Multi-provider (Anthropic / OpenAI / Ollama). Off by default.
 3. **Logs deluxe** — multi-pod merged stream, JSON/logfmt parsing, regex search, jump-to-source from a log line to its events or owning workload.
 4. **Prod-context safety guard** — typed-confirmation modal for destructive verbs against contexts matching a configurable regex.
-5. **Quality-of-life fixes** — session restore (last context+ns+filter), port-forward manager view, live `?` keybind overlay, drop-in compatibility with k9s `plugins.yaml`.
+5. **Quality-of-life fixes** — session restore (last context+ns+filter), port-forward manager view, live `?` keybind overlay, and bounded k9s compatibility for plugins, aliases, hotkeys, skins, and read-only defaults.
 
 ## Foundational decisions
 
@@ -58,7 +58,7 @@ What we want to do better than k9s:
 | Auth (MVP) | Static kubeconfig + exec plugins (`aws`, `gcloud`, `kubelogin`) |
 | Multi-cluster | Single active context + fast switcher |
 | Editing | Shell out to `$EDITOR` |
-| Config | `~/.config/astrotui/` (one-shot `config import-k9s` migrates skin/hotkeys/aliases) |
+| Config | `~/.config/astrotui/` (one-shot `config import-k9s` migration; see [compatibility details](docs/k9s-compatibility.md)) |
 | Distribution | Signed GitHub Releases binaries + `ghcr.io/alphabravo-oss/astrotui` container image |
 | Telemetry | Zero |
 | License | Apache-2.0 |

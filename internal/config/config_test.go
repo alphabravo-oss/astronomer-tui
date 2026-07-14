@@ -131,3 +131,18 @@ func TestImportK9sRejectsDestinationSymlink(t *testing.T) {
 		t.Fatalf("outside target should not be created: %v", err)
 	}
 }
+
+func TestImportK9sRejectsOversizedSource(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	data := make([]byte, MaxCompatibilityFileBytes+1)
+	if err := os.WriteFile(filepath.Join(src, "aliases.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportK9s(src, dst); err == nil {
+		t.Fatal("expected oversized import source rejection")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "aliases.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("oversized import must not create destination: %v", err)
+	}
+}

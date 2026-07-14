@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"github.com/alphabravo-oss/astrotui/internal/ai"
 	"github.com/alphabravo-oss/astrotui/internal/cluster"
 	"github.com/alphabravo-oss/astrotui/internal/config"
+	"github.com/alphabravo-oss/astrotui/internal/plugins"
 	"github.com/alphabravo-oss/astrotui/internal/session"
 	"github.com/alphabravo-oss/astrotui/internal/ui"
 	"github.com/alphabravo-oss/astrotui/internal/ui/theme"
@@ -82,6 +84,24 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		return exConfig
 	}
+	commandAliases, err := config.LoadAliases(config.DefaultAliasesPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aliases error: %v\n", err)
+		return exConfig
+	}
+	hotkeys, err := config.LoadHotKeys(config.DefaultHotKeysPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hotkeys error: %v\n", err)
+		return exConfig
+	}
+	pluginFile, err := plugins.LoadMerged(
+		filepath.Join(config.DefaultK9sDir(), "plugins.yaml"),
+		filepath.Join(config.DefaultDir(), "plugins.yaml"),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "plugins error: %v\n", err)
+		return exConfig
+	}
 
 	stateStore := session.NewStore(session.DefaultPath())
 	var restored session.State
@@ -136,14 +156,17 @@ func run(args []string) int {
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 	app := ui.New(ui.Options{
-		Client:       kube,
-		Config:       cfg,
-		SessionStore: stateStore,
-		InitialState: restored,
-		Skin:         skin,
-		SkinUpdates:  theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
-		AIProvider:   aiProvider,
-		Version:      version,
+		Client:         kube,
+		Config:         cfg,
+		SessionStore:   stateStore,
+		InitialState:   restored,
+		Skin:           skin,
+		SkinUpdates:    theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
+		AIProvider:     aiProvider,
+		CommandAliases: commandAliases,
+		HotKeys:        hotkeys,
+		PluginFile:     &pluginFile,
+		Version:        version,
 	})
 	if err := app.Run(appCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)

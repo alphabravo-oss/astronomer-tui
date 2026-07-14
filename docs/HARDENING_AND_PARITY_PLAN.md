@@ -56,6 +56,8 @@ Wave 3 adds generic describe/YAML/events views, controller-owner jumps, related-
 
 Wave 4 closes the interactive Pod I/O and port-forward operations row. Pod copy supports upload and download with explicit container selection, `pods/exec` RBAC preflight, context safety policy, non-TTY binary streams, absolute remote paths, private local staging with no-overwrite installation, and file-count/byte limits. Tar traversal, links, devices, and local special files are rejected. Port-forwards now self-remove after completion and stop on context switch or application exit. Active forwards can launch bounded, cancellable, loopback-only native HTTP benchmarks; `:bench` shows latency, status-code, failure, and lifecycle results without executing an external benchmark binary. Unit/race coverage and a real kind upload/download golden path enforce the contracts.
 
+Wave 5 makes imported k9s configuration operational instead of merely copying files. Bounded strict loaders now apply resource alias chains and hotkeys, map imported global read-only mode into the native safety policy, translate the commonly used k9s skin colors into the live theme, and bind scoped plugin shortcuts with explicit override precedence and ambiguity refusal. Configuration and plugin inputs are capped at 1 MiB, help text escapes markup, and invalid compatibility input fails startup. Alias targets that add filters or arguments and k9s custom table-column expressions remain open, so the compatibility row is intentionally not yet marked complete.
+
 ## Phase 3 — differentiated capabilities
 
 - [ ] Global fuzzy palette across resources, actions, contexts, namespaces, history, and plugins with bounded top-k search.

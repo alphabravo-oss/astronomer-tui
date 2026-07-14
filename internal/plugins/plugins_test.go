@@ -9,7 +9,7 @@ import (
 
 func TestLoadK9sPlugin(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plugins.yaml")
-	data := []byte("plugins:\n  stern:\n    description: Tail logs\n    scopes: [po]\n    shortCut: Ctrl-L\n    command: stern\n    args: [\"$NAME\"]\n    background: false\n    confirm: true\n")
+	data := []byte("plugins:\n  stern:\n    description: Tail logs\n    scopes: [po]\n    shortCut: Ctrl-L\n    override: true\n    command: stern\n    args: [\"$NAME\"]\n    background: false\n    confirm: true\n")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -17,8 +17,18 @@ func TestLoadK9sPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file.Plugins["stern"].Command != "stern" || !file.Plugins["stern"].Confirm {
+	if file.Plugins["stern"].Command != "stern" || !file.Plugins["stern"].Confirm || !file.Plugins["stern"].Override {
 		t.Fatalf("unexpected plugin %#v", file.Plugins["stern"])
+	}
+}
+
+func TestLoadRejectsOversizedPluginFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plugins.yaml")
+	if err := os.WriteFile(path, make([]byte, MaxFileBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected oversized plugin file rejection")
 	}
 }
 

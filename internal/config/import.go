@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -35,7 +36,7 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 	for _, file := range mapping {
 		src := filepath.Join(srcDir, file.src)
 		dst := filepath.Join(dstDir, file.dst)
-		data, err := os.ReadFile(src) // #nosec G304 -- import source is an explicit user-selected directory.
+		data, err := readImportSource(src)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				results = append(results, ImportResult{File: file.src, Status: "skipped"})
@@ -74,4 +75,20 @@ func ImportK9s(srcDir, dstDir string) ([]ImportResult, error) {
 		results = append(results, ImportResult{File: file.src, Status: "imported"})
 	}
 	return results, nil
+}
+
+func readImportSource(path string) ([]byte, error) {
+	file, err := os.Open(path) // #nosec G304 -- import source is an explicit user-selected directory.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, MaxCompatibilityFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > MaxCompatibilityFileBytes {
+		return nil, fmt.Errorf("%s: import source exceeds %d bytes", path, MaxCompatibilityFileBytes)
+	}
+	return data, nil
 }

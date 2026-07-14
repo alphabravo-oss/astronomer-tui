@@ -370,6 +370,15 @@ func (a *App) paletteEntries() []palette.Entry {
 	a.mu.RUnlock()
 	entries := palette.ResourceEntries(fallbackKind(currentGVR.Resource), objects)
 	seenResourceAliases := make(map[string]struct{})
+	customAliases := make([]string, 0, len(a.commandAliases))
+	for alias := range a.commandAliases {
+		customAliases = append(customAliases, alias)
+	}
+	sort.Strings(customAliases)
+	for _, alias := range customAliases {
+		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: ":" + alias, Description: "Configured k9s-compatible alias", Category: palette.Resources})
+		seenResourceAliases[alias] = struct{}{}
+	}
 	for _, alias := range ResourceAliasEntries() {
 		id := "resource:" + alias
 		seenResourceAliases[strings.TrimPrefix(id, "resource::")] = struct{}{}
