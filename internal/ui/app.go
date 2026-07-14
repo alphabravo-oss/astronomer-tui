@@ -43,6 +43,7 @@ type Options struct {
 	Skin            uitheme.Skin
 	SkinUpdates     <-chan uitheme.Update
 	PluginPaths     []string
+	PluginFile      *plugins.File
 	PluginExecutor  func(plugins.CommandPlan) error
 	PluginPreviewer func(context.Context, plugins.CommandPlan) (string, error)
 	ClientFactory   func(context.Context, cluster.ClientOptions) (*cluster.Client, error)
@@ -57,6 +58,8 @@ type Options struct {
 	AIProvider      ai.LLMProvider
 	LogStreamer     func(context.Context, logs.PodLogTarget, logs.RequestOptions, io.Writer) error
 	Version         string
+	CommandAliases  map[string]string
+	HotKeys         map[string]config.HotKey
 }
 
 type App struct {
@@ -66,6 +69,7 @@ type App struct {
 	cache             *cluster.ResourceCache
 	resourceInfo      map[schema.GroupVersionResource]cluster.ResourceInfo
 	resourceAliases   map[string]schema.GroupVersionResource
+	commandAliases    map[string]string
 	resourceRenderers map[schema.GroupVersionResource]views.Renderer
 	currentGVR        schema.GroupVersionResource
 	objects           []*unstructured.Unstructured
@@ -85,15 +89,22 @@ type App struct {
 }
 
 func New(options Options) *App {
-	pluginFile, _ := plugins.LoadMerged(pluginPaths(options.PluginPaths)...)
-	app := &App{
-		options:    options,
-		app:        tview.NewApplication(),
-		table:      tview.NewTable().SetSelectable(true, false),
-		crashes:    CrashReporter{Dir: DefaultCrashDir()},
-		pluginFile: pluginFile,
-		skin:       resolveSkin(options),
+	var pluginFile plugins.File
+	if options.PluginFile != nil {
+		pluginFile = *options.PluginFile
+	} else {
+		pluginFile, _ = plugins.LoadMerged(pluginPaths(options.PluginPaths)...)
 	}
+	app := &App{
+		options:        options,
+		app:            tview.NewApplication(),
+		table:          tview.NewTable().SetSelectable(true, false),
+		crashes:        CrashReporter{Dir: DefaultCrashDir()},
+		pluginFile:     pluginFile,
+		skin:           resolveSkin(options),
+		commandAliases: copyStringMap(options.CommandAliases),
+	}
+	app.options.HotKeys = copyHotKeys(options.HotKeys)
 	app.applySkin()
 	return app
 }
@@ -113,6 +124,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.table.SetTitle(fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, gvr.Resource)).SetBorder(true)
 	a.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if a.executeHotKey(event, true) || a.executePluginShortcut(event, true) {
+			return nil
+		}
 		if event.Rune() == '?' {
 			a.safe(a.showHelp)
 			return nil
@@ -211,6 +225,9 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		if col, ok := sortColumnFromRune(event.Rune()); ok {
 			a.setSort(col)
+			return nil
+		}
+		if a.executeHotKey(event, false) || a.executePluginShortcut(event, false) {
 			return nil
 		}
 		return event
@@ -323,10 +340,27 @@ func (a *App) rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
 }
 
 func (a *App) resolveResource(command string) (schema.GroupVersionResource, bool) {
+	return a.resolveResourceDepth(command, make(map[string]struct{}), 0)
+}
+
+func (a *App) resolveResourceDepth(command string, seen map[string]struct{}, depth int) (schema.GroupVersionResource, bool) {
+	if depth >= 8 {
+		return schema.GroupVersionResource{}, false
+	}
+	normalized := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(command)), ":")
+	if target, ok := a.commandAliases[normalized]; ok {
+		if _, cycle := seen[normalized]; cycle {
+			return schema.GroupVersionResource{}, false
+		}
+		if len(strings.Fields(target)) != 1 {
+			return schema.GroupVersionResource{}, false
+		}
+		seen[normalized] = struct{}{}
+		return a.resolveResourceDepth(target, seen, depth+1)
+	}
 	if gvr, ok := resourceCommand(command); ok {
 		return gvr, true
 	}
-	normalized := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(command)), ":")
 	a.mu.RLock()
 	gvr, ok := a.resourceAliases[normalized]
 	a.mu.RUnlock()
@@ -573,7 +607,7 @@ func rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
 
 func (a *App) showHelp() {
 	modal := tview.NewModal().
-		SetText(HelpText(a.actionCatalog())).
+		SetText(a.helpText()).
 		AddButtons([]string{"OK"}).
 		SetDoneFunc(func(_ int, _ string) { a.app.SetRoot(a.table, true) })
 	a.app.SetRoot(modal, false)
@@ -607,34 +641,8 @@ func (a *App) showCommand(ctx context.Context) {
 		SetFieldWidth(40)
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
-			command, ok := parseCommand(input.GetText())
-			if !ok {
-				a.showMessage("Unknown command", ":"+input.GetText())
-				return
-			}
-			switch command.Kind {
-			case "resource":
-				gvr, ok := a.resolveResource(command.Value)
-				if !ok {
-					a.showMessage("Unknown command", ":"+input.GetText())
-					return
-				}
-				a.switchResource(ctx, gvr)
-			case "namespace":
-				a.switchNamespace(command.Value)
-			case "port-forward-manager":
-				a.showPortForwardManager()
-				return
-			case "auth-summary":
-				a.showAuthSummary()
-				return
-			case "health":
-				a.showHealth()
-				return
-			case "benchmark-manager":
-				a.showBenchmarkManager()
-				return
-			}
+			a.executeCommand(ctx, input.GetText())
+			return
 		}
 		a.app.SetRoot(a.table, true)
 	})

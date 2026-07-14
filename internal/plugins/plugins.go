@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -15,6 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const MaxFileBytes = int64(1 << 20)
+
 type File struct {
 	Plugins map[string]Plugin `yaml:"plugins"`
 }
@@ -23,6 +26,7 @@ type Plugin struct {
 	Description    string   `yaml:"description"`
 	Scopes         []string `yaml:"scopes"`
 	ShortCut       string   `yaml:"shortCut"`
+	Override       bool     `yaml:"override"`
 	Command        string   `yaml:"command"`
 	Args           []string `yaml:"args"`
 	Background     bool     `yaml:"background"`
@@ -44,12 +48,20 @@ type CommandPlan struct {
 
 func Load(path string) (File, error) {
 	var file File
-	data, err := os.ReadFile(path) // #nosec G304 -- plugin file path is intentionally user-selectable.
+	input, err := os.Open(path) // #nosec G304 -- plugin file path is intentionally user-selectable.
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return file, nil
 		}
 		return file, err
+	}
+	defer func() { _ = input.Close() }()
+	data, err := io.ReadAll(io.LimitReader(input, MaxFileBytes+1))
+	if err != nil {
+		return file, err
+	}
+	if int64(len(data)) > MaxFileBytes {
+		return file, fmt.Errorf("%s: plugin file exceeds %d bytes", path, MaxFileBytes)
 	}
 	return file, yaml.Unmarshal(data, &file)
 }

@@ -36,3 +36,15 @@ func TestReadOnlyBlocksPluginsAndPortForward(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultPolicyAppliesWithoutContextOverride(t *testing.T) {
+	cfg := config.Default()
+	cfg.Safety.DefaultPolicy = "read-only"
+	if err := Authorize(cfg, "dev", Delete, ""); err != ErrReadOnly {
+		t.Fatalf("expected default read-only policy, got %v", err)
+	}
+	cfg.Contexts = map[string]config.ContextConfig{"dev": {Policy: "full"}}
+	if err := Authorize(cfg, "dev", Delete, ""); err != nil {
+		t.Fatalf("context override should win: %v", err)
+	}
+}

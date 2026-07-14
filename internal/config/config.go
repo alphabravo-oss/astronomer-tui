@@ -29,7 +29,8 @@ type KubernetesConfig struct {
 }
 
 type SafetyConfig struct {
-	ProdPattern string `yaml:"prodPattern"`
+	ProdPattern   string `yaml:"prodPattern"`
+	DefaultPolicy string `yaml:"defaultPolicy"`
 }
 
 type AIConfig struct {
@@ -91,15 +92,20 @@ func Load(path string) (Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(path) // #nosec G304 -- config path is intentionally user-selectable.
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return cfg, nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return cfg, err
 		}
-		return cfg, err
+	} else {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&cfg); err != nil {
+			return cfg, validationError(path, err)
+		}
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, validationError(path, err)
+	var applyErr error
+	cfg, applyErr = ApplyImportedK9sReadOnly(cfg, ImportedK9sConfigPath(path))
+	if applyErr != nil {
+		return cfg, applyErr
 	}
 	if cfg.Safety.ProdPattern == "" {
 		cfg.Safety.ProdPattern = `(?i)prod|production`
@@ -112,6 +118,11 @@ func Load(path string) (Config, error) {
 	}
 	if _, err := regexp.Compile(cfg.Safety.ProdPattern); err != nil {
 		return cfg, &ValidationError{Path: path, Err: fmt.Errorf("safety.prodPattern is invalid: %w", err)}
+	}
+	switch cfg.Safety.DefaultPolicy {
+	case "", "read-only", "confirm-destructive", "full":
+	default:
+		return cfg, &ValidationError{Path: path, Err: fmt.Errorf("safety.defaultPolicy must be read-only, confirm-destructive, or full")}
 	}
 	if cfg.AI.Enabled {
 		switch cfg.AI.Provider {

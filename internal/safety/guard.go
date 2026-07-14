@@ -29,6 +29,9 @@ func PolicyFor(cfg config.Config, currentContext string) string {
 	if ctx, ok := cfg.Contexts[currentContext]; ok && ctx.Policy != "" {
 		return ctx.Policy
 	}
+	if cfg.Safety.DefaultPolicy != "" {
+		return cfg.Safety.DefaultPolicy
+	}
 	pattern := cfg.Safety.ProdPattern
 	if pattern == "" {
 		pattern = `(?i)prod|production`
