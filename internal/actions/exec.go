@@ -4,8 +4,12 @@ package actions
 import (
 	"context"
 	"fmt"
+	"golang.org/x/term"
 	"io"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"net/http"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -17,6 +21,7 @@ import (
 var ShellFallback = []string{"bash", "sh", "/bin/ash"}
 
 type ExecTarget struct {
+	UID       types.UID
 	Namespace string
 	Pod       string
 	Container string
@@ -31,7 +36,7 @@ func ExecTargets(pod corev1.Pod, preferredContainer string) ([]ExecTarget, error
 	targets := make([]ExecTarget, 0, len(ShellFallback))
 	for _, shell := range ShellFallback {
 		targets = append(targets, ExecTarget{
-			Namespace: pod.Namespace,
+			UID: pod.UID, Namespace: pod.Namespace,
 			Pod:       pod.Name,
 			Container: container,
 			Command:   []string{shell},
@@ -42,11 +47,22 @@ func ExecTargets(pod corev1.Pod, preferredContainer string) ([]ExecTarget, error
 
 func pickContainer(pod corev1.Pod, preferred string) (string, bool) {
 	if preferred != "" {
+		for _, container := range pod.Spec.InitContainers {
+			if container.Name == preferred {
+				return preferred, true
+			}
+		}
+		for _, container := range pod.Spec.EphemeralContainers {
+			if container.Name == preferred {
+				return preferred, true
+			}
+		}
 		for _, container := range pod.Spec.Containers {
 			if container.Name == preferred {
 				return preferred, true
 			}
 		}
+		return "", false
 	}
 	if len(pod.Spec.Containers) > 0 {
 		return pod.Spec.Containers[0].Name, true
@@ -64,6 +80,26 @@ func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface,
 	}
 	if client == nil {
 		return fmt.Errorf("kubernetes client is required for exec")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if target.UID != "" {
+		pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.Pod, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if pod.UID != target.UID {
+			return fmt.Errorf("pod was replaced before exec")
+		}
+	}
+	var sizes remotecommand.TerminalSizeQueue
+	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		state, err := term.MakeRaw(int(file.Fd()))
+		if err != nil {
+			return err
+		}
+		defer term.Restore(int(file.Fd()), state)
+		sizes = resizeQueue(ctx, file)
 	}
 	request := client.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -83,9 +119,10 @@ func RunExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface,
 		return err
 	}
 	return executor.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdin:  stdin,
-		Stdout: stdout,
-		Stderr: stderr,
-		Tty:    stdin != nil,
+		TerminalSizeQueue: sizes,
+		Stdin:             stdin,
+		Stdout:            stdout,
+		Stderr:            stderr,
+		Tty:               stdin != nil,
 	})
 }

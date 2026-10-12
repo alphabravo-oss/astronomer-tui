@@ -26,24 +26,38 @@ const (
 type Event struct {
 	Type   EventType
 	Object *unstructured.Unstructured
+	Err    error
 }
 
 type ResourceCache struct {
-	factory   dynamicinformer.DynamicSharedInformerFactory
-	informers map[schema.GroupVersionResource]cache.SharedIndexInformer
-	running   map[schema.GroupVersionResource]struct{}
-	subs      map[schema.GroupVersionResource][]chan Event
-	stop      <-chan struct{}
-	mu        sync.RWMutex
+	factory    dynamicinformer.DynamicSharedInformerFactory
+	informers  map[schema.GroupVersionResource]cache.SharedIndexInformer
+	running    map[schema.GroupVersionResource]struct{}
+	subs       map[schema.GroupVersionResource][]chan Event
+	lastErrors map[schema.GroupVersionResource]error
+	stop       <-chan struct{}
+	mu         sync.RWMutex
 }
 
 func NewResourceCache(client dynamic.Interface, resync time.Duration) *ResourceCache {
-	return &ResourceCache{
-		factory:   dynamicinformer.NewDynamicSharedInformerFactory(client, resync),
-		informers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
-		running:   make(map[schema.GroupVersionResource]struct{}),
-		subs:      make(map[schema.GroupVersionResource][]chan Event),
+	return NewScopedResourceCache(client, resync, "")
+}
+
+// NewScopedResourceCache restricts LIST and WATCH at the API, not just the UI.
+func NewScopedResourceCache(client dynamic.Interface, resync time.Duration, namespace string) *ResourceCache {
+	r := &ResourceCache{
+
+		informers:  make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+		running:    make(map[schema.GroupVersionResource]struct{}),
+		subs:       make(map[schema.GroupVersionResource][]chan Event),
+		lastErrors: make(map[schema.GroupVersionResource]error),
 	}
+	r.factory = dynamicinformer.NewFilteredDynamicSharedInformerFactory(reportingClient{Interface: client, success: func(g schema.GroupVersionResource) {
+		if r.LastError(g) != nil {
+			r.publish(g, Event{})
+		}
+	}}, resync, namespace, nil)
+	return r
 }
 
 func (r *ResourceCache) Start(ctx context.Context) {
@@ -62,6 +76,9 @@ func (r *ResourceCache) Ensure(gvr schema.GroupVersionResource) cache.SharedInde
 		return informer
 	}
 	informer := r.factory.ForResource(gvr).Informer()
+	_ = informer.SetWatchErrorHandlerWithContext(func(_ context.Context, _ *cache.Reflector, err error) {
+		r.publish(gvr, Event{Err: err})
+	})
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			r.publish(gvr, Event{Type: EventAdded, Object: asUnstructured(obj)})
@@ -121,18 +138,44 @@ func (r *ResourceCache) List(gvr schema.GroupVersionResource, namespace string, 
 }
 
 func (r *ResourceCache) Subscribe(gvr schema.GroupVersionResource) <-chan Event {
+	ch, _ := r.SubscribeWithCancel(gvr)
+	return ch
+}
+
+// SubscribeWithCancel releases a subscription without closing a channel that
+// an in-flight publisher might still be using. Cancellation is idempotent.
+func (r *ResourceCache) SubscribeWithCancel(gvr schema.GroupVersionResource) (<-chan Event, func()) {
 	ch := make(chan Event, 256)
 	r.mu.Lock()
 	r.subs[gvr] = append(r.subs[gvr], ch)
 	r.mu.Unlock()
 	r.Ensure(gvr)
-	return ch
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			for i, sub := range r.subs[gvr] {
+				if sub == ch {
+					r.subs[gvr] = append(r.subs[gvr][:i], r.subs[gvr][i+1:]...)
+					break
+				}
+			}
+		})
+	}
+}
+
+func (r *ResourceCache) LastError(gvr schema.GroupVersionResource) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastErrors[gvr]
 }
 
 func (r *ResourceCache) publish(gvr schema.GroupVersionResource, event Event) {
-	r.mu.RLock()
+	r.mu.Lock()
+	r.lastErrors[gvr] = event.Err
 	subs := append([]chan Event(nil), r.subs[gvr]...)
-	r.mu.RUnlock()
+	r.mu.Unlock()
 	for _, ch := range subs {
 		select {
 		case ch <- event:

@@ -21,7 +21,7 @@ func TestShowSplashRendersBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer screen.Fini()
-	app.app.SetScreen(screen)
+	app.SetScreen(screen)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -35,7 +35,7 @@ func TestShowSplashRendersBanner(t *testing.T) {
 		}
 	}()
 
-	if !waitForScreenText(t, app, screen, "Astronomer TUI") {
+	if !waitForScreenText(t, app, screen, "Astro-TUI") {
 		t.Fatal("splash did not render the product name")
 	}
 	if !waitForScreenText(t, app, screen, "by AlphaBravo") {
@@ -65,7 +65,9 @@ func waitForScreenText(t *testing.T, app *App, screen tcell.SimulationScreen, wa
 // is serialized with the draw loop instead of racing it.
 func captureScreen(app *App, screen tcell.SimulationScreen) string {
 	result := make(chan string, 1)
-	app.app.QueueUpdate(func() { result <- screenText(screen) })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	app.queueUpdate(ctx, func() { result <- screenText(screen) })
 	select {
 	case s := <-result:
 		return s

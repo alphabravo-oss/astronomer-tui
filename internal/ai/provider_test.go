@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphabravo-oss/astrotui/internal/config"
 )
@@ -245,4 +247,55 @@ func (s *streamProvider) Stream(_ context.Context, req Request) (<-chan Chunk, e
 	}
 	close(ch)
 	return ch, nil
+}
+
+func TestStreamSendUnblocksOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan Chunk)
+	done := make(chan bool, 1)
+	go func() { done <- sendChunk(ctx, ch, Chunk{Text: "blocked"}) }()
+	cancel()
+	select {
+	case sent := <-done:
+		if sent {
+			t.Fatal("unexpected send")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream send leaked")
+	}
+}
+
+func TestOllamaIncludesRequestContext(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			prompt := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Prompt string `json:"prompt"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				prompt <- body.Prompt
+				_, _ = w.Write([]byte(`{"response":"ok","done":true}` + "\n"))
+			}))
+			defer server.Close()
+			provider := HTTPProvider{Provider: "ollama", Endpoint: server.URL, Client: server.Client()}
+			req := Request{Prompt: "explain", Context: map[string]string{"logs": "failure details"}}
+			if stream {
+				ch, err := provider.Stream(context.Background(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				collectChunks(t, ch)
+			} else {
+				if _, err := provider.Complete(context.Background(), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := <-prompt; !strings.Contains(got, "failure details") {
+				t.Fatalf("context omitted: %s", got)
+			}
+		})
+	}
 }

@@ -27,14 +27,16 @@ type PortForward struct {
 	Remote    int
 	Since     time.Time
 	Namespace string
+	Status    string
 	stop      func()
 }
 
 type PortForwardSpec struct {
-	Namespace string
-	Resource  string
-	Local     int
-	Remote    int
+	TargetPortName string
+	Namespace      string
+	Resource       string
+	Local          int
+	Remote         int
 }
 
 type PortForwardManager struct {
@@ -62,6 +64,9 @@ func (m *PortForwardManager) Add(forward PortForward) {
 	defer m.mu.Unlock()
 	if forward.Since.IsZero() {
 		forward.Since = time.Now()
+	}
+	if old, ok := m.forwards[forward.ID]; ok && old.stop != nil {
+		old.stop()
 	}
 	m.forwards[forward.ID] = forward
 }
@@ -121,10 +126,11 @@ func DefaultServiceForwards(service corev1.Service) []PortForwardSpec {
 			remote = int(port.Port)
 		}
 		specs = append(specs, PortForwardSpec{
-			Namespace: service.Namespace,
-			Resource:  "service/" + service.Name,
-			Local:     int(port.Port),
-			Remote:    remote,
+			Namespace:      service.Namespace,
+			Resource:       "service/" + service.Name,
+			TargetPortName: port.TargetPort.StrVal,
+			Local:          int(port.Port),
+			Remote:         remote,
 		})
 	}
 	return specs
@@ -160,13 +166,38 @@ func ResolvePortForwardSpec(ctx context.Context, client kubernetes.Interface, sp
 		return PortForwardSpec{}, fmt.Errorf("service %s selector matched no pods", serviceName)
 	}
 	sort.SliceStable(pods.Items, func(i, j int) bool {
+		runningI, runningJ := pods.Items[i].Status.Phase == corev1.PodRunning, pods.Items[j].Status.Phase == corev1.PodRunning
+		if runningI != runningJ {
+			return runningI
+		}
 		return pods.Items[i].Name < pods.Items[j].Name
 	})
+	if spec.TargetPortName != "" {
+		found := false
+		for _, container := range pods.Items[0].Spec.Containers {
+			for _, port := range container.Ports {
+				if port.Name == spec.TargetPortName && (port.Protocol == corev1.ProtocolTCP || port.Protocol == "") {
+					spec.Remote = int(port.ContainerPort)
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return PortForwardSpec{}, fmt.Errorf("pod %s has no TCP port named %s", pods.Items[0].Name, spec.TargetPortName)
+		}
+	}
 	spec.Resource = "pod/" + pods.Items[0].Name
 	return spec, nil
 }
 
 func RunPortForward(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, spec PortForwardSpec, out, errOut io.Writer) error {
+	return RunPortForwardReady(ctx, cfg, client, spec, out, errOut, nil)
+}
+
+func RunPortForwardReady(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, spec PortForwardSpec, out, errOut io.Writer, ready func()) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if cfg == nil {
 		return fmt.Errorf("rest config is required for port-forward")
 	}
@@ -202,5 +233,41 @@ func RunPortForward(ctx context.Context, cfg *rest.Config, client kubernetes.Int
 	if err != nil {
 		return err
 	}
+	if ready != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-readyCh:
+				ready()
+			}
+		}()
+	}
 	return forwarder.ForwardPorts()
+}
+
+func (m *PortForwardManager) TryAdd(forward PortForward) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, old := range m.forwards {
+		if old.Local == forward.Local && old.Status != "stopped" && !strings.HasPrefix(old.Status, "failed:") {
+			return fmt.Errorf("local port %d is already registered", forward.Local)
+		}
+	}
+	if forward.Since.IsZero() {
+		forward.Since = time.Now()
+	}
+	forward.Status = "connecting"
+	if old, ok := m.forwards[forward.ID]; ok && old.stop != nil {
+		old.stop()
+	}
+	m.forwards[forward.ID] = forward
+	return nil
+}
+func (m *PortForwardManager) SetStatus(id, status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if forward, ok := m.forwards[id]; ok {
+		forward.Status = status
+		m.forwards[id] = forward
+	}
 }

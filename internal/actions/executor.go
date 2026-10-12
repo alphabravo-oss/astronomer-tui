@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/alphabravo-oss/astrotui/internal/config"
 	"github.com/alphabravo-oss/astrotui/internal/safety"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -18,6 +20,7 @@ type Request struct {
 	Kind         string
 	Namespace    string
 	ResourceName string
+	UID          types.UID
 	GVR          schema.GroupVersionResource
 	Args         map[string]string
 	ConfirmText  string
@@ -40,8 +43,8 @@ func (e Executor) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	switch req.Name {
-	case "delete":
-		if err := DeleteResource(ctx, e.Dynamic, req.GVR, req.Namespace, req.ResourceName); err != nil {
+	case "delete", "force-delete":
+		if err := deleteResourceOptions(ctx, e.Dynamic, req.GVR, req.Namespace, req.ResourceName, req.UID, req.Name == "force-delete"); err != nil {
 			return Result{}, err
 		}
 		return Result{Message: fmt.Sprintf("deleted %s/%s", req.Kind, req.ResourceName)}, nil
@@ -50,10 +53,39 @@ func (e Executor) Run(ctx context.Context, req Request) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("replicas must be an integer: %w", err)
 		}
+		if replicas < 0 {
+			return Result{}, fmt.Errorf("replicas must be non-negative")
+		}
 		if err := e.scaleWorkload(ctx, req, int32(replicas)); err != nil {
 			return Result{}, err
 		}
 		return Result{Message: fmt.Sprintf("scaled %s/%s to %d", req.Kind, req.ResourceName, replicas)}, nil
+	case "cordon", "uncordon", "suspend", "resume", "trigger-job", "drain":
+		var err error
+		message := req.Name + " completed for " + req.Kind + "/" + req.ResourceName
+		switch req.Name {
+		case "trigger-job":
+			if req.Kind != "CronJob" {
+				return Result{}, fmt.Errorf("trigger requires CronJob")
+			}
+			message, err = e.triggerJob(ctx, req)
+		case "drain":
+			if req.Kind != "Node" {
+				return Result{}, fmt.Errorf("drain requires Node")
+			}
+			err = e.drain(ctx, req)
+		case "cordon", "uncordon":
+			if req.Kind != "Node" {
+				return Result{}, fmt.Errorf("cordon requires Node")
+			}
+			err = e.mutate(ctx, req, map[string]any{"spec": map[string]any{"unschedulable": req.Name == "cordon"}})
+		case "suspend", "resume":
+			if req.Kind != "CronJob" && req.Kind != "Job" {
+				return Result{}, fmt.Errorf("suspend requires Job or CronJob")
+			}
+			err = e.mutate(ctx, req, map[string]any{"spec": map[string]any{"suspend": req.Name == "suspend"}})
+		}
+		return Result{Message: message}, err
 	case "restart":
 		if err := e.restartWorkload(ctx, req); err != nil {
 			return Result{}, err
@@ -65,6 +97,11 @@ func (e Executor) Run(ctx context.Context, req Request) (Result, error) {
 }
 
 func (e Executor) scaleWorkload(ctx context.Context, req Request, replicas int32) error {
+	if req.Kind == "Deployment" || req.Kind == "StatefulSet" || req.Kind == "ReplicaSet" {
+		if req.UID != "" && e.Dynamic != nil || req.Kind == "ReplicaSet" {
+			return e.mutate(ctx, req, map[string]any{"spec": map[string]any{"replicas": replicas}})
+		}
+	}
 	switch req.Kind {
 	case "Deployment":
 		return ScaleDeployment(ctx, e.Clientset, req.Namespace, req.ResourceName, replicas)
@@ -76,6 +113,11 @@ func (e Executor) scaleWorkload(ctx context.Context, req Request, replicas int32
 }
 
 func (e Executor) restartWorkload(ctx context.Context, req Request) error {
+	if req.Kind == "Deployment" || req.Kind == "StatefulSet" || req.Kind == "DaemonSet" {
+		if req.UID != "" && e.Dynamic != nil || req.Kind == "DaemonSet" {
+			return e.mutate(ctx, req, map[string]any{"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"kubectl.kubernetes.io/restartedAt": time.Now().UTC().Format(time.RFC3339Nano)}}}}})
+		}
+	}
 	switch req.Kind {
 	case "Deployment":
 		return RestartDeployment(ctx, e.Clientset, req.Namespace, req.ResourceName)
@@ -88,7 +130,7 @@ func (e Executor) restartWorkload(ctx context.Context, req Request) error {
 
 func safetyVerb(action string) safety.Verb {
 	switch action {
-	case "delete":
+	case "delete", "force-delete":
 		return safety.Delete
 	case "scale":
 		return safety.Scale
@@ -96,6 +138,8 @@ func safetyVerb(action string) safety.Verb {
 		return safety.Restart
 	case "edit":
 		return safety.Edit
+	case "cordon", "uncordon", "drain", "trigger-job", "suspend", "resume":
+		return safety.Patch
 	default:
 		return safety.Verb(action)
 	}

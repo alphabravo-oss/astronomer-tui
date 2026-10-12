@@ -2,10 +2,10 @@
 package ui
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"github.com/alphabravo-oss/astrotui/internal/ai"
+	"github.com/alphabravo-oss/astrotui/internal/cluster"
 	"github.com/alphabravo-oss/astrotui/internal/logs"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -13,7 +13,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -23,89 +26,205 @@ func (a *App) showLogsPlan() {
 		a.showLogContainerPicker(pod)
 		return
 	}
-	targets, err := a.selectedLogTargets(context.Background())
-	if err != nil {
-		a.showMessage("Logs unavailable", err.Error())
+	obj := a.selectedObject()
+	if obj == nil {
 		return
 	}
-	a.showLogsView(targets)
+	obj = obj.DeepCopy()
+	client := a.options.Client
+	a.operation("Find log targets", func(ctx context.Context) (func(), error) {
+		targets, err := logTargetsForObject(ctx, client, obj)
+		if err != nil {
+			return nil, err
+		}
+		return func() { a.showLogsView(targets) }, nil
+	})
 }
 
-func (a *App) showLogsView(targets []logs.PodLogTarget) {
-	ctx, cancel := context.WithCancel(context.Background())
+func (a *App) showLogsView(targets []logs.PodLogTarget) { a.showLogsOptions(targets, false) }
+
+func (a *App) showLogsOptions(targets []logs.PodLogTarget, previous bool) {
+	if a.logCancel != nil {
+		a.logCancel()
+	}
+	ctx, cancel := context.WithCancel(a.backgroundContext())
+	a.logCancel = cancel
+	a.logRows = nil
 	buffer := logs.NewBuffer(10_000)
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
 	wrap := true
-	view.SetWrap(wrap).SetWordWrap(true)
+	follow := true
+	paused := false
+	view.SetWrap(false).SetWordWrap(false).SetRegions(true)
 	view.SetTitle(" Logs ").SetBorder(true)
 	filter := ""
 	search := logSearchState{}
 	gotoPending := false
+	pattern := ""
 	render := func() {
-		view.SetText(renderLogEntries(buffer.Filter(filter), true))
+		if paused {
+			return
+		}
+		entries := buffer.Filter(filter)
+		text, rows := logDocument(view, entries, wrap)
+		a.logRows = rows
+		view.SetText(text)
+		if pattern != "" {
+			re, err := regexp.Compile(pattern)
+			if err == nil {
+				var matches []int
+				last := uint64(0)
+				for i, e := range rows {
+					if e.ID != last && re.MatchString(e.Line) {
+						matches = append(matches, i)
+					}
+					last = e.ID
+				}
+				search.matches = matches
+			}
+		}
+		mode := "SCROLL"
+		if previous {
+			mode = "PREVIOUS"
+		}
+		if follow {
+			view.ScrollToEnd()
+			if !previous {
+				mode = "FOLLOW"
+			}
+		}
+		view.SetTitle(fmt.Sprintf(" Logs · %s · %d lines · Space pause · F follow · p previous · t retry · / filter · Esc back ", mode, len(entries)))
 	}
 	render()
+	updates := make(chan struct{}, 1)
+	notify := func() {
+		select {
+		case updates <- struct{}{}:
+		default:
+		}
+	}
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				select {
+				case <-updates:
+					a.queueUpdate(ctx, func() {
+						if ctx.Err() == nil {
+							render()
+						}
+					})
+				default:
+				}
+			}
+		}
+	}()
 	streamer := a.logStreamer()
 	for _, target := range targets {
 		target := target
 		go func() {
-			writer := newLogLineWriter(target.Pod, buffer, func() {
-				a.app.QueueUpdateDraw(render)
-			})
-			if err := streamer(ctx, target, logs.RequestOptions{Follow: true}, writer); err != nil {
-				buffer.Append(target.Pod, "stream error: "+err.Error(), time.Now())
-				a.app.QueueUpdateDraw(render)
+			writer := newLogLineWriter(target.Pod, buffer, notify)
+			writer.target = target
+			defer writer.Flush()
+			tail := int64(1000)
+			if err := streamer(ctx, target, logs.RequestOptions{Follow: !previous, Previous: previous, Timestamps: true, TailLines: &tail}, writer); err != nil && ctx.Err() == nil {
+				buffer.AppendSource(target, "stream error (t to retry): "+err.Error(), time.Now())
+				notify()
 			}
 		}()
 	}
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc || event.Rune() == 'q':
+		case event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q':
 			cancel()
-			a.app.SetRoot(a.table, true)
+			a.showMain()
 			return nil
-		case event.Rune() == '/':
-			a.showLogFilter(view, buffer, &filter)
+		case event.Key() == tcell.KeyRune && event.Rune() == ' ':
+			paused = !paused
+			if paused {
+				view.SetTitle(" Logs · PAUSED · Space resume · Esc back ")
+			} else {
+				render()
+			}
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == 'p':
+			cancel()
+			a.showLogsOptions(targets, !previous)
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == 't':
+			cancel()
+			a.showLogsOptions(targets, previous)
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == 'F':
+			follow = !follow
+			render()
+			return nil
+		case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyPgUp || event.Key() == tcell.KeyHome || event.Key() == tcell.KeyRune && event.Rune() == 'k':
+			follow = false
+			return event
+		case event.Key() == tcell.KeyRune && event.Rune() == '/':
+			a.showLogFilter(view, buffer, &filter, render)
 			return nil
 		case event.Key() == tcell.KeyCtrlR:
-			a.showLogRegex(view, buffer, &search)
+			follow = false
+			input := tview.NewInputField().SetLabel("Regex: ").SetText(pattern)
+			input.SetDoneFunc(func(key tcell.Key) {
+				if key == tcell.KeyEnter {
+					if _, err := regexp.Compile(input.GetText()); err != nil {
+						input.SetLabel("Invalid regex: ")
+						return
+					}
+					pattern = input.GetText()
+					search.current = -1
+				}
+				a.app.SetRoot(view, true)
+				render()
+			})
+			a.app.SetRoot(input, true)
 			return nil
-		case event.Rune() == 'n':
+		case event.Key() == tcell.KeyRune && event.Rune() == 'n':
+			follow = false
 			if row, ok := search.Next(); ok {
 				view.ScrollTo(row, 0)
 			}
 			return nil
-		case event.Rune() == 'N':
+		case event.Key() == tcell.KeyRune && event.Rune() == 'N':
+			follow = false
 			if row, ok := search.Prev(); ok {
 				view.ScrollTo(row, 0)
 			}
 			return nil
-		case event.Rune() == 's':
+		case event.Key() == tcell.KeyRune && event.Rune() == 's':
 			a.showLogSave(view, buffer, filter)
 			return nil
-		case event.Rune() == 'g':
+		case event.Key() == tcell.KeyRune && event.Rune() == 'g':
 			gotoPending = true
 			view.SetTitle(" Logs: g e events | g o owner | g a AI ")
 			return nil
-		case gotoPending && event.Rune() == 'e':
+		case gotoPending && event.Key() == tcell.KeyRune && event.Rune() == 'e':
 			gotoPending = false
 			a.jumpLogEvents(view, buffer, filter)
 			return nil
-		case gotoPending && event.Rune() == 'o':
+		case gotoPending && event.Key() == tcell.KeyRune && event.Rune() == 'o':
 			gotoPending = false
 			a.jumpLogOwner(context.Background(), view, buffer, filter)
 			return nil
-		case gotoPending && event.Rune() == 'a':
+		case gotoPending && event.Key() == tcell.KeyRune && event.Rune() == 'a':
 			gotoPending = false
 			a.showLogAISummary(view, buffer, filter)
 			return nil
-		case event.Rune() == 'w':
-			toggleLogWrap(view, &wrap)
+		case event.Key() == tcell.KeyRune && event.Rune() == 'w':
+			wrap = !wrap
+			render()
 			return nil
 		case event.Key() == tcell.KeyCtrlE:
 			a.showLogAIChat(view, buffer, filter)
 			return nil
-		case event.Rune() == 'a':
+		case event.Key() == tcell.KeyRune && event.Rune() == 'a':
 			a.showLogAISummary(view, buffer, filter)
 			return nil
 		}
@@ -115,38 +234,49 @@ func (a *App) showLogsView(targets []logs.PodLogTarget) {
 }
 
 func (a *App) jumpLogEvents(view *tview.TextView, buffer *logs.Buffer, filter string) {
-	entry, ok := selectedLogEntry(view, buffer, filter)
-	if !ok || strings.TrimSpace(entry.Pod) == "" {
-		view.SetText("No pod log line selected.")
-		return
-	}
-	a.switchResourceFiltered(context.Background(), schema.GroupVersionResource{Version: "v1", Resource: "events"}, entry.Pod)
-	a.app.SetRoot(a.table, true)
+	a.jumpLogTarget(view, buffer, filter, false)
 }
-
-func (a *App) jumpLogOwner(ctx context.Context, view *tview.TextView, buffer *logs.Buffer, filter string) {
-	entry, ok := selectedLogEntry(view, buffer, filter)
-	if !ok || strings.TrimSpace(entry.Pod) == "" {
-		view.SetText("No pod log line selected.")
-		return
-	}
-	pod, err := a.podForLogEntry(ctx, entry)
-	if err != nil {
-		view.SetText("Owner jump unavailable: " + err.Error())
-		return
-	}
-	if len(pod.OwnerReferences) == 0 {
-		view.SetText("Owner jump unavailable: pod has no owner references")
-		return
-	}
-	owner := pod.OwnerReferences[0]
-	gvr, ok := ownerGVR(owner.Kind)
+func (a *App) jumpLogOwner(_ context.Context, view *tview.TextView, buffer *logs.Buffer, filter string) {
+	a.jumpLogTarget(view, buffer, filter, true)
+}
+func (a *App) jumpLogTarget(view *tview.TextView, buffer *logs.Buffer, filter string, owner bool) {
+	entry, ok := a.currentLogEntry(view, buffer, filter)
 	if !ok {
-		view.SetText("Owner jump unavailable: unsupported owner kind " + owner.Kind)
 		return
 	}
-	a.switchResourceFiltered(ctx, gvr, owner.Name)
-	a.app.SetRoot(a.table, true)
+	client := a.options.Client
+	ns := entry.Namespace
+	if ns == "" {
+		ns = client.Namespace
+	}
+	a.operation("Find log source", func(ctx context.Context) (func(), error) {
+		pod, err := client.Clientset.CoreV1().Pods(ns).Get(ctx, entry.Pod, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		if entry.PodUID != "" && entry.PodUID != pod.UID {
+			return nil, fmt.Errorf("log source pod was replaced; reopen logs for the new pod")
+		}
+		data, err := runtime.DefaultUnstructuredConverter.ToUnstructured(pod)
+		if err != nil {
+			return nil, err
+		}
+		obj := &unstructured.Unstructured{Object: data}
+		return func() {
+			if a.logCancel != nil {
+				a.logCancel()
+			}
+			if owner {
+				if len(pod.OwnerReferences) == 0 {
+					a.showMessage("Owner", "Pod has no owner")
+					return
+				}
+				a.openOwner(obj, pod.OwnerReferences[0])
+			} else {
+				a.showObjectEvents(obj)
+			}
+		}, nil
+	})
 }
 
 func (a *App) switchResourceFiltered(ctx context.Context, gvr schema.GroupVersionResource, filter string) bool {
@@ -183,6 +313,13 @@ func (a *App) podForLogEntry(ctx context.Context, entry logs.Entry) (corev1.Pod,
 		return corev1.Pod{}, fmt.Errorf("kubernetes clientset is required")
 	}
 	namespace := a.options.Client.Namespace
+	if entry.Namespace != "" {
+		pod, err := a.options.Client.Clientset.CoreV1().Pods(entry.Namespace).Get(ctx, entry.Pod, metav1.GetOptions{})
+		if err != nil {
+			return corev1.Pod{}, err
+		}
+		return *pod, nil
+	}
 	if entry.Pod != "" {
 		targets, err := a.selectedLogTargets(ctx)
 		if err == nil {
@@ -222,6 +359,7 @@ func ownerGVR(kind string) (schema.GroupVersionResource, bool) {
 
 func (a *App) showLogContainerPicker(pod corev1.Pod) {
 	list := tview.NewList()
+	list.AddItem("All containers", "Includes init and ephemeral containers", 0, func() { a.showLogsView(logs.AllTargetsForPods([]corev1.Pod{pod})) })
 	for _, container := range logs.ContainerNames(pod) {
 		container := container
 		list.AddItem(container, "", 0, func() {
@@ -230,8 +368,8 @@ func (a *App) showLogContainerPicker(pod corev1.Pod) {
 	}
 	list.SetTitle(" Select log container ").SetBorder(true)
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			a.showMain()
 			return nil
 		}
 		return event
@@ -240,7 +378,7 @@ func (a *App) showLogContainerPicker(pod corev1.Pod) {
 }
 
 func logTargetForPodContainer(pod corev1.Pod, container string) logs.PodLogTarget {
-	return logs.PodLogTarget{Namespace: pod.Namespace, Pod: pod.Name, Container: container}
+	return logs.PodLogTarget{Namespace: pod.Namespace, Pod: pod.Name, Container: container, PodUID: pod.UID}
 }
 
 func toggleLogWrap(view *tview.TextView, wrap *bool) {
@@ -248,7 +386,7 @@ func toggleLogWrap(view *tview.TextView, wrap *bool) {
 	view.SetWrap(*wrap)
 }
 
-func (a *App) showLogFilter(view *tview.TextView, buffer *logs.Buffer, filter *string) {
+func (a *App) showLogFilter(view *tview.TextView, buffer *logs.Buffer, filter *string, render func()) {
 	input := tview.NewInputField().
 		SetLabel("Log filter: ").
 		SetText(*filter).
@@ -256,7 +394,7 @@ func (a *App) showLogFilter(view *tview.TextView, buffer *logs.Buffer, filter *s
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			*filter = input.GetText()
-			view.SetText(renderLogEntries(buffer.Filter(*filter), true))
+			render()
 		}
 		a.app.SetRoot(view, true)
 	})
@@ -293,7 +431,7 @@ func (a *App) showLogSave(view *tview.TextView, buffer *logs.Buffer, filter stri
 				if err := buffer.Save(path, filter); err != nil {
 					view.SetText("save error: " + err.Error())
 				} else {
-					view.SetText(fmt.Sprintf("saved logs to %s\n\n%s", path, renderLogEntries(buffer.Filter(filter), true)))
+					view.SetTitle(" Logs saved to " + tview.Escape(path) + " ")
 				}
 			}
 		}
@@ -312,7 +450,17 @@ func (a *App) showLogAISummary(view *tview.TextView, buffer *logs.Buffer, filter
 		view.SetText("No log lines available to summarize")
 		return
 	}
-	a.streamAIResponse(view, ai.LogSummaryRequest(prompt))
+	output := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
+	output.SetTitle(" AI log summary · Esc back ").SetBorder(true)
+	output.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyEsc {
+			a.app.SetRoot(view, true)
+			return nil
+		}
+		return e
+	})
+	a.app.SetRoot(output, true)
+	a.streamAIResponse(output, ai.LogSummaryRequest(prompt))
 }
 
 func (a *App) showLogAIChat(logView *tview.TextView, buffer *logs.Buffer, filter string) {
@@ -345,7 +493,7 @@ func (a *App) showLogAIChat(logView *tview.TextView, buffer *logs.Buffer, filter
 		AddItem(output, 0, 1, false).
 		AddItem(input, 1, 0, true)
 	flex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
+		if event.Key() == tcell.KeyEsc {
 			a.app.SetRoot(logView, true)
 			return nil
 		}
@@ -379,9 +527,9 @@ func renderLogEntries(entries []logs.Entry, prefixPod bool) string {
 
 func formatLogEntryForView(entry logs.Entry, prefixPod bool) string {
 	if !prefixPod || entry.Pod == "" {
-		return logs.FormatEntry(entry, prefixPod)
+		return tview.Escape(logs.FormatEntry(entry, prefixPod))
 	}
-	colored := fmt.Sprintf("[%s]%s[-]", logColor(entry.Color), logs.PrefixPod(entry.Pod, entry.Line))
+	colored := fmt.Sprintf("[%s]%s[-]", logColor(entry.Color), tview.Escape(logs.PrefixPod(entry.Source(), entry.Line)))
 	if !entry.Time.IsZero() {
 		return fmt.Sprintf("%s %s", entry.Time.Format(time.RFC3339), colored)
 	}
@@ -397,17 +545,23 @@ func logColor(index int) string {
 }
 
 func logSummaryContext(entries []logs.Entry, limit int) string {
-	if limit <= 0 || len(entries) <= limit {
-		return renderLogEntries(entries, true)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[len(entries)-limit:]
 	}
-	return renderLogEntries(entries[len(entries)-limit:], true)
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, logs.FormatEntry(entry, true))
+	}
+	return strings.Join(lines, "\n")
 }
 
 type logLineWriter struct {
-	pod      string
-	buffer   *logs.Buffer
-	onAppend func()
-	pending  string
+	pod       string
+	target    logs.PodLogTarget
+	buffer    *logs.Buffer
+	onAppend  func()
+	pending   string
+	truncated bool
 }
 
 type logSearchState struct {
@@ -442,26 +596,64 @@ func newLogLineWriter(pod string, buffer *logs.Buffer, onAppend func()) *logLine
 	return &logLineWriter{pod: pod, buffer: buffer, onAppend: onAppend}
 }
 
+const maxLogLineBytes = 256 * 1024
+
 func (w *logLineWriter) Write(data []byte) (int, error) {
-	w.pending += string(data)
-	scanner := bufio.NewScanner(strings.NewReader(w.pending))
-	var lines []string
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	size := len(data)
+	for len(data) > 0 {
+		end := -1
+		for i, b := range data {
+			if b == '\n' {
+				end = i
+				break
+			}
+		}
+		part := data
+		if end >= 0 {
+			part = data[:end]
+		}
+		remaining := maxLogLineBytes - len(w.pending)
+		if len(part) > remaining {
+			w.truncated = true
+			part = part[:remaining]
+		}
+		w.pending += string(part)
+		if end < 0 {
+			break
+		}
+		w.emit()
+		data = data[end+1:]
 	}
-	if strings.HasSuffix(w.pending, "\n") {
-		w.pending = ""
-	} else if len(lines) > 0 {
-		w.pending = lines[len(lines)-1]
-		lines = lines[:len(lines)-1]
+	return size, nil
+}
+
+func (w *logLineWriter) emit() {
+	line := strings.TrimSuffix(w.pending, "\r")
+	if w.truncated {
+		line += " … [line truncated]"
 	}
-	for _, line := range lines {
-		w.buffer.Append(w.pod, line, time.Now())
-		if w.onAppend != nil {
-			w.onAppend()
+	stamp := time.Now()
+	if first, rest, ok := strings.Cut(line, " "); ok {
+		if parsed, err := time.Parse(time.RFC3339Nano, first); err == nil {
+			stamp = parsed
+			line = rest
 		}
 	}
-	return len(data), scanner.Err()
+	target := w.target
+	if target.Pod == "" {
+		target.Pod = w.pod
+	}
+	w.buffer.AppendSource(target, line, stamp)
+	w.pending, w.truncated = "", false
+	if w.onAppend != nil {
+		w.onAppend()
+	}
+}
+
+func (w *logLineWriter) Flush() {
+	if w.pending != "" || w.truncated {
+		w.emit()
+	}
 }
 
 func (a *App) selectedLogTargets(ctx context.Context) ([]logs.PodLogTarget, error) {
@@ -512,4 +704,58 @@ func (a *App) logTargetsForSelector(ctx context.Context, namespace string, selec
 		return nil, fmt.Errorf("no pods match selector %s", parsed.String())
 	}
 	return logs.TargetsForPods(pods), nil
+}
+
+func logTargetsForObject(ctx context.Context, client *cluster.Client, obj *unstructured.Unstructured) ([]logs.PodLogTarget, error) {
+	if obj.GetKind() == "Pod" {
+		var pod corev1.Pod
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &pod); err != nil {
+			return nil, err
+		}
+		return logs.TargetsForPods([]corev1.Pod{pod}), nil
+	}
+	raw, _, _ := unstructured.NestedMap(obj.Object, "spec", "selector")
+	var selector metav1.LabelSelector
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &selector); err != nil {
+		return nil, err
+	}
+	s, err := metav1.LabelSelectorAsSelector(&selector)
+	if err != nil || s.Empty() {
+		return nil, fmt.Errorf("resource has no pod selector")
+	}
+	pods, err := logs.PodsForSelector(ctx, client.Clientset, obj.GetNamespace(), s)
+	if err != nil {
+		return nil, err
+	}
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("no matching pods")
+	}
+	return logs.AllTargetsForPods(pods), nil
+}
+func logDocument(view *tview.TextView, entries []logs.Entry, wrap bool) (string, []logs.Entry) {
+	_, _, width, _ := view.GetInnerRect()
+	if width < 1 {
+		width = 120
+	}
+	var lines []string
+	var rows []logs.Entry
+	for _, e := range entries {
+		text := formatLogEntryForView(e, true)
+		parts := []string{text}
+		if wrap {
+			parts = tview.WordWrap(text, width)
+		}
+		for _, part := range parts {
+			lines = append(lines, part)
+			rows = append(rows, e)
+		}
+	}
+	return strings.Join(lines, "\n"), rows
+}
+func (a *App) currentLogEntry(view *tview.TextView, buffer *logs.Buffer, filter string) (logs.Entry, bool) {
+	row, _ := view.GetScrollOffset()
+	if len(a.logRows) > 0 {
+		return a.logRows[min(max(row, 0), len(a.logRows)-1)], true
+	}
+	return selectedLogEntry(view, buffer, filter)
 }

@@ -262,3 +262,48 @@ func assertContainsAll(t *testing.T, got []string, want []string) {
 		}
 	}
 }
+
+func TestReleaseCandidatesStayPrereleasesWithCompleteInstallables(t *testing.T) {
+	data, err := os.ReadFile("../../.goreleaser.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Release struct {
+			Prerelease string `yaml:"prerelease"`
+			MakeLatest bool   `yaml:"make_latest"`
+			ExtraFiles []struct {
+				Glob string `yaml:"glob"`
+			} `yaml:"extra_files"`
+		} `yaml:"release"`
+		Dockers []struct {
+			Goarch string   `yaml:"goarch"`
+			Flags  []string `yaml:"build_flag_templates"`
+		} `yaml:"dockers"`
+	}
+	if err = yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Release.Prerelease != "auto" || cfg.Release.MakeLatest {
+		t.Fatal("RC tags must remain prereleases without replacing latest")
+	}
+	installer := false
+	for _, f := range cfg.Release.ExtraFiles {
+		installer = installer || f.Glob == "install.sh"
+	}
+	if !installer {
+		t.Fatal("release installer asset missing")
+	}
+	for _, d := range cfg.Dockers {
+		assertContainsAll(t, d.Flags, []string{"--platform=linux/" + d.Goarch})
+	}
+	workflow, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Export signed container installables", "container-checksums.txt.sig", "container-checksums.txt.pem", "docker save", "gh release upload"} {
+		if !strings.Contains(string(workflow), want) {
+			t.Fatalf("offline container installable contract missing %q", want)
+		}
+	}
+}

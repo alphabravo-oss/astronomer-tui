@@ -2,6 +2,7 @@
 package theme
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ type Skin struct {
 
 func Defaults() map[string]Skin {
 	return map[string]Skin{
-		"dark":  {Name: "dark", FG: "white", BG: "black", Accent: "aqua", Warn: "yellow", Error: "red", Subtle: "gray", Selection: "blue"},
+		"dark":  {Name: "dark", FG: "#dbe4f0", BG: "#000000", Accent: "#75d5f5", Warn: "#e9b86a", Error: "#ff7b86", Subtle: "#8592a3", Selection: "#263c59"},
 		"light": {Name: "light", FG: "black", BG: "white", Accent: "blue", Warn: "orange", Error: "red", Subtle: "gray", Selection: "aqua"},
 		"dim":   {Name: "dim", FG: "gray", BG: "black", Accent: "green", Warn: "yellow", Error: "maroon", Subtle: "darkgray", Selection: "teal"},
 	}
@@ -41,6 +42,9 @@ func Load(path string, fallback string) (Skin, error) {
 		fallback = "dark"
 	}
 	if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- skin path is intentionally user-selectable.
+		if len(bytes.TrimSpace(data)) == 0 {
+			return Skin{}, errors.New("skin file is empty")
+		}
 		var skin Skin
 		if err := yaml.Unmarshal(data, &skin); err != nil {
 			return Skin{}, err

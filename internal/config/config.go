@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	ReadOnly bool                     `yaml:"readOnly"`
 	Safety   SafetyConfig             `yaml:"safety"`
 	AI       AIConfig                 `yaml:"ai"`
 	Contexts map[string]ContextConfig `yaml:"contexts"`
@@ -33,7 +34,10 @@ type AIConfig struct {
 }
 
 type ContextConfig struct {
-	Policy string `yaml:"policy"`
+	Namespace string `yaml:"namespace"`
+	View      string `yaml:"view"`
+	Theme     string `yaml:"theme"`
+	Policy    string `yaml:"policy"`
 }
 
 type ValidationError struct {

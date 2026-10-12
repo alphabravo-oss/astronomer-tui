@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,5 +58,18 @@ func TestBufferAssignsStablePodColor(t *testing.T) {
 	entries := buffer.Entries()
 	if len(entries) != 1 || entries[0].Color != StableColorIndex("api-1") {
 		t.Fatalf("unexpected entries %#v", entries)
+	}
+}
+
+func TestRingRetainsLastLinesAcrossMultipleWraps(t *testing.T) {
+	buffer := NewBuffer(3)
+	for i := 0; i < 20; i++ {
+		buffer.Append("api", fmt.Sprint(i), time.Unix(1, 0))
+	}
+	entries := buffer.Entries()
+	for i, want := range []string{"17", "18", "19"} {
+		if entries[i].Line != want {
+			t.Fatalf("ring order: %#v", entries)
+		}
 	}
 }

@@ -2,9 +2,12 @@
 package plugins
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -41,12 +44,39 @@ func Load(path string) (File, error) {
 		}
 		return file, err
 	}
-	return file, yaml.Unmarshal(data, &file)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&file); err == nil && file.Plugins != nil {
+		return file, nil
+	}
+	var single Plugin
+	dec = yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&single); err == nil && single.Command != "" {
+		return File{Plugins: map[string]Plugin{strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)): single}}, nil
+	}
+	return file, fmt.Errorf("invalid or unsupported plugin fields in %s", path)
 }
 
 func LoadMerged(paths ...string) (File, error) {
 	merged := File{Plugins: map[string]Plugin{}}
+	var expanded []string
 	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return merged, err
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml")) {
+					expanded = append(expanded, filepath.Join(path, entry.Name()))
+				}
+			}
+		} else {
+			expanded = append(expanded, path)
+		}
+	}
+	for _, path := range expanded {
 		file, err := Load(path)
 		if err != nil {
 			return merged, err

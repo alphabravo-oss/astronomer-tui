@@ -1,3 +1,5 @@
+> Historical release audit. Its completion conclusion is superseded for interactive quality and k9s parity by the [2026-10-12 quality audit](../reviews/k9s-quality-audit.md). Historical release artifacts below are not evidence that all runtime workflows meet parity.
+
 # astrotui Completion Audit
 
 Objective: read `docs/specs` and build the `astrotui` product out fully as the Kubernetes TUI described in `docs/specs/i-want-to-make-a-clone-of-k9s-but-call-it-astronomer-tui-and.md`.

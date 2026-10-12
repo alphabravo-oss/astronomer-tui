@@ -20,17 +20,37 @@ func parseCommand(input string) (Command, bool) {
 		return Command{}, false
 	}
 	switch parts[0] {
+	case "access", "diagnose":
+		return Command{Kind: parts[0]}, len(parts) == 1
+	case "refresh":
+		return Command{Kind: "refresh"}, len(parts) == 1
 	case "ns", "namespace":
-		if len(parts) != 2 {
+		if len(parts) > 2 {
 			return Command{}, false
 		}
+		if len(parts) == 1 {
+			return Command{Kind: "namespace"}, true
+		}
 		return Command{Kind: "namespace", Value: parts[1]}, true
+	case "ctx", "context":
+		if len(parts) > 2 {
+			return Command{}, false
+		}
+		if len(parts) == 1 {
+			return Command{Kind: "context"}, true
+		}
+		return Command{Kind: "context", Value: parts[1]}, true
+	case "q", "quit":
+		return Command{Kind: "quit"}, len(parts) == 1
 	case "pf", "port-forward", "portforwards":
 		if len(parts) != 1 {
 			return Command{}, false
 		}
 		return Command{Kind: "port-forward-manager"}, true
 	default:
-		return Command{Kind: "resource", Value: parts[0]}, true
+		if len(parts) > 16 {
+			return Command{}, false
+		}
+		return Command{Kind: "resource", Value: strings.Join(parts, " ")}, true
 	}
 }

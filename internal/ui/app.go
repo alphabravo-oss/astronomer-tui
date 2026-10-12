@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/alphabravo-oss/astrotui/internal/actions"
 	"github.com/alphabravo-oss/astrotui/internal/ai"
@@ -33,6 +36,9 @@ import (
 )
 
 type Options struct {
+	ReadOnly       bool
+	StartupCommand string
+	ConfigDir      string
 	Client         *cluster.Client
 	Config         config.Config
 	SessionStore   *session.Store
@@ -52,53 +58,166 @@ type Options struct {
 }
 
 type App struct {
-	options        Options
-	app            *tview.Application
-	table          *tview.Table
-	cache          *cluster.ResourceCache
-	currentGVR     schema.GroupVersionResource
-	objects        []*unstructured.Unstructured
-	visibleObjects []*unstructured.Unstructured
-	filter         string
-	sortCol        int
-	sortDesc       bool
-	mu             sync.RWMutex
-	resourceCancel context.CancelFunc
-	crashes        CrashReporter
-	renderer       views.Renderer
-	pluginFile     plugins.File
-	skin           uitheme.Skin
+	baseConfig          config.Config
+	marked              map[types.UID]*unstructured.Unstructured
+	viewCancel          context.CancelFunc
+	customCancel        context.CancelFunc
+	viewAlias           string
+	viewAliasGVR        schema.GroupVersionResource
+	screen              tcell.Screen
+	discoveryGeneration uint64
+	renderCache         map[*unstructured.Unstructured][]views.Cell
+	aiCancel            context.CancelFunc
+	custom              config.Custom
+	customError         error
+	logRows             []logs.Entry
+	history             []navigationState
+	relatedPredicate    func(*unstructured.Unstructured) bool
+	metricsError        error
+	catalog             *cluster.Catalog
+	namespaceCatalog    []string
+	discoveryError      error
+	operationCancel     context.CancelFunc
+	operationID         uint64
+	cacheScope          string
+	renderers           map[schema.GroupVersionResource]views.Renderer
+	updates             chan uiUpdate
+	updatePending       atomic.Bool
+	options             Options
+	app                 *tview.Application
+	table               *tview.Table
+	cache               *cluster.ResourceCache
+	currentGVR          schema.GroupVersionResource
+	objects             []*unstructured.Unstructured
+	visibleObjects      []*unstructured.Unstructured
+	filter              string
+	sortCol             int
+	sortDesc            bool
+	mu                  sync.RWMutex
+	resourceCancel      context.CancelFunc
+	cacheCancel         context.CancelFunc
+	ctx                 context.Context
+	generation          uint64
+	loading             bool
+	watchError          error
+	wide                bool
+	root                *tview.Flex
+	header              *tview.TextView
+	status              *tview.TextView
+	hints               *tview.TextView
+	logCancel           context.CancelFunc
+	crashes             CrashReporter
+	renderer            views.Renderer
+	pluginFile          plugins.File
+	skin                uitheme.Skin
 }
 
 func New(options Options) *App {
+	if options.ReadOnly {
+		options.Config.ReadOnly = true
+	}
 	pluginFile, _ := plugins.LoadMerged(pluginPaths(options.PluginPaths)...)
 	app := &App{
-		options:    options,
+		baseConfig: options.Config, options: options,
 		app:        tview.NewApplication(),
 		table:      tview.NewTable().SetSelectable(true, false),
 		crashes:    CrashReporter{Dir: DefaultCrashDir()},
 		pluginFile: pluginFile,
 		skin:       resolveSkin(options),
 	}
+	contextName, clusterName := app.contextNames()
+	app.custom, app.customError = config.LoadScopedCustom(app.customDir(), clusterName, contextName)
+	if cfg, err := config.ApplyContext(app.customDir(), clusterName, contextName, app.baseConfig); err == nil {
+		app.options.Config = cfg
+	} else {
+		app.customError = err
+	}
+	if app.options.StartupCommand == "" {
+		app.options.StartupCommand = app.options.Config.Contexts[contextName].View
+	}
+	app.skin = resolveSkin(app.options)
+	app.initLayout()
 	app.applySkin()
 	return app
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if _, noColor := os.LookupEnv("NO_COLOR"); noColor && a.screen == nil {
+		screen, err := tcell.NewScreen()
+		if err != nil {
+			return err
+		}
+		a.SetScreen(screen)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	a.ctx = ctx
+	defer cancel()
+	defer a.stopBackground()
 	gvr := initialResourceGVR(a.options.InitialState)
-	a.cache = cluster.NewResourceCache(a.options.Client.Dynamic, 30*time.Minute)
-	a.cache.Start(ctx)
+	a.cacheScope = namespaceFor(a.options.Client, gvr)
+	a.cache = cluster.NewScopedResourceCache(a.options.Client.Dynamic, 30*time.Minute, a.cacheScope)
+	cacheCtx, cacheCancel := context.WithCancel(ctx)
+	a.cacheCancel = cacheCancel
+	a.cache.Start(cacheCtx)
 	a.switchResource(ctx, gvr)
 	if a.options.InitialState.LastFilter != "" {
 		a.mu.Lock()
 		a.filter = a.options.InitialState.LastFilter
 		a.mu.Unlock()
 	}
+	a.refreshDiscovery()
+	a.watchCustom(ctx)
 	a.watchSkinUpdates(ctx)
 
-	a.table.SetTitle(fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, gvr.Resource)).SetBorder(true)
+	a.bindTableKeys(ctx)
+	a.showMain()
+	if a.options.StartupCommand != "" {
+		a.executeConfiguredCommand(a.options.StartupCommand)
+	}
+	go func() { <-ctx.Done(); a.app.Stop() }()
+	err := a.app.Run()
+	if a.options.SessionStore != nil {
+		if saveErr := a.options.SessionStore.Save(a.sessionState()); saveErr != nil {
+			err = errors.Join(err, fmt.Errorf("save session: %w", saveErr))
+		}
+	}
+	return err
+}
+
+func (a *App) bindTableKeys(ctx context.Context) {
 	a.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Rune() == '?' {
+		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
+			a.toggleMarked()
+			return nil
+		}
+		if event.Key() == tcell.KeyCtrlK {
+			a.deleteMarked(true)
+			return nil
+		}
+		if event.Key() == tcell.KeyCtrlA {
+			a.showAliasList()
+			return nil
+		}
+		if event.Key() == tcell.KeyCtrlS {
+			a.saveSelectedResource()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == 'R' {
+			a.showRelationships()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == 'b' {
+			a.goBack()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == 'E' {
+			if o := a.selectedObject(); o != nil {
+				a.showObjectEvents(o.DeepCopy())
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == '?' {
 			a.safe(a.showHelp)
 			return nil
 		}
@@ -111,57 +230,95 @@ func (a *App) Run(ctx context.Context) error {
 			return nil
 		}
 		if event.Key() == tcell.KeyEnter {
+			a.safe(a.openSelected)
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'd' || event.Rune() == 'y') {
+			if event.Rune() == 'd' {
+				a.safe(a.showDescribe)
+				return nil
+			}
 			a.safe(a.showDetail)
 			return nil
 		}
-		if event.Rune() == '/' {
+		if event.Key() == tcell.KeyRune && event.Rune() == '/' {
 			a.safe(a.showFilter)
 			return nil
 		}
-		if event.Rune() == ':' {
+		if event.Key() == tcell.KeyRune && event.Rune() == ':' {
 			a.safe(func() { a.showCommand(ctx) })
 			return nil
 		}
-		if event.Rune() == 'd' {
+		if event.Key() == tcell.KeyCtrlD {
+			if len(a.marked) > 0 {
+				a.deleteMarked(false)
+				return nil
+			}
 			a.safe(a.showDelete)
 			return nil
 		}
-		if event.Rune() == 'e' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 'e' {
 			a.safe(a.showEdit)
 			return nil
 		}
-		if event.Rune() == 'l' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 'l' {
 			a.safe(a.showLogsPlan)
 			return nil
 		}
-		if event.Rune() == 'x' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 'x' {
+			if obj := a.selectedObject(); obj != nil && obj.GetKind() == "Secret" {
+				a.showDecodedSecret()
+				return nil
+			}
+			if obj := a.selectedObject(); obj != nil && obj.GetKind() == "Node" {
+				a.showNodeShell()
+				return nil
+			}
 			a.safe(a.showExecPlan)
 			return nil
 		}
-		if event.Rune() == 'f' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 'f' {
 			a.safe(a.showPortForwardPlan)
 			return nil
 		}
-		if event.Rune() == 's' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 's' {
 			a.safe(a.showScale)
 			return nil
 		}
-		if event.Rune() == 'r' {
+		if event.Key() == tcell.KeyRune && event.Rune() == 'r' {
 			a.safe(a.showRestart)
 			return nil
 		}
-		if col, ok := sortColumnFromRune(event.Rune()); ok {
-			a.setSort(col)
+		if col, ok := sortColumnFromRune(event.Rune()); ok && event.Key() == tcell.KeyRune {
+			if a.renderer != nil {
+				columns := a.displayColumns(a.renderer)
+				if col < len(columns) {
+					a.setSort(columns[col])
+				}
+			}
+			return nil
+		}
+		switch {
+		case event.Key() == tcell.KeyEsc:
+			a.filter = ""
+			a.renderCurrent()
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == '0':
+			a.switchNamespace("all")
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == 'w':
+			a.wide = !a.wide
+			a.renderCurrent()
+			return nil
+		case event.Key() == tcell.KeyRune && event.Rune() == 'q':
+			a.app.Stop()
+			return nil
+		}
+		if a.customKey(event) {
 			return nil
 		}
 		return event
 	})
-	a.showSplash(ctx)
-	err := a.app.Run()
-	if a.options.SessionStore != nil {
-		_ = a.options.SessionStore.Save(a.sessionState())
-	}
-	return err
 }
 
 func initialResourceGVR(state session.State) schema.GroupVersionResource {
@@ -176,9 +333,15 @@ func (a *App) sessionState() session.State {
 	if a.options.Client != nil {
 		state.Context = a.options.Client.Context
 		state.Namespace = a.options.Client.Namespace
+		if state.Namespace == "" {
+			state.Namespace = "all"
+		}
 	}
 	a.mu.RLock()
 	state.LastView = a.currentGVR.Resource
+	if _, builtin := views.Builtins()[a.currentGVR]; !builtin && a.currentGVR.Resource != "" {
+		state.LastView = a.currentGVR.Group + "/" + a.currentGVR.Version + "/" + a.currentGVR.Resource
+	}
 	state.LastFilter = a.filter
 	a.mu.RUnlock()
 	if state.LastView == "" {
@@ -210,16 +373,17 @@ func (a *App) drawHeader(renderer views.Renderer) {
 	a.mu.RLock()
 	sortCol, sortDesc := a.sortCol, a.sortDesc
 	a.mu.RUnlock()
-	for col, header := range renderer.Header() {
+	for col, index := range a.displayColumns(renderer) {
+		header := renderer.Header()[index]
 		name := header.Name
-		if col == sortCol {
+		if index == sortCol {
 			if sortDesc {
 				name += " ▼"
 			} else {
 				name += " ▲"
 			}
 		}
-		a.table.SetCell(0, col, tview.NewTableCell(name).SetTextColor(skinColor(a.skin.Accent, tcell.ColorAqua)).SetSelectable(false))
+		a.table.SetCell(0, col, tview.NewTableCell(name).SetExpansion(0).SetTextColor(skinColor(a.skin.Accent, tcell.ColorAqua)).SetSelectable(false))
 	}
 }
 
@@ -248,7 +412,7 @@ func (a *App) watchSkinUpdates(ctx context.Context) {
 				if update.Err != nil {
 					continue
 				}
-				a.app.QueueUpdateDraw(func() {
+				a.queueUpdate(ctx, func() {
 					a.applySkinUpdate(update.Skin)
 				})
 			}
@@ -257,97 +421,115 @@ func (a *App) watchSkinUpdates(ctx context.Context) {
 }
 
 func (a *App) applySkinUpdate(skin uitheme.Skin) {
-	a.skin = skin
+	a.options.Skin = skin
+	a.skin = resolveSkin(a.options)
 	a.applySkin()
-	if a.renderer != nil {
-		a.drawHeader(a.renderer)
-	}
-	a.updateTitle()
+	a.renderCurrent()
 }
 
-func (a *App) refresh(cache *cluster.ResourceCache, client *cluster.Client, gvr schema.GroupVersionResource, renderer views.Renderer) {
-	a.mu.RLock()
-	current := a.currentGVR
-	a.mu.RUnlock()
-	if current != gvr {
+// Resource callbacks only invalidate. All widget and model commits happen together
+// on the tview event loop, and a generation rejects obsolete queued work.
+func (a *App) applyResourceRefresh(cache *cluster.ResourceCache, generation uint64) {
+	if a.cache != cache || a.generation != generation {
 		return
 	}
-	namespace := namespaceFor(client, gvr)
-	items, err := cache.List(gvr, namespace, labels.Everything())
-	if err != nil {
-		return
+	wasLoading := a.loading
+	a.loading = !cache.Ensure(a.currentGVR).HasSynced()
+	if wasLoading && !a.loading {
+		a.mu.Lock()
+		a.visibleObjects = nil
+		a.mu.Unlock()
+		a.table.Select(0, 0)
 	}
-	a.mu.RLock()
-	filter, sortCol, sortDesc := a.filter, a.sortCol, a.sortDesc
-	a.mu.RUnlock()
-	rows, visible := buildRows(renderer, items, filter, sortCol, sortDesc)
-	a.mu.Lock()
-	a.objects = items
-	a.visibleObjects = visible
-	a.mu.Unlock()
-	a.app.QueueUpdateDraw(func() {
-		a.table.Clear()
-		a.drawHeader(renderer)
-		for row, cells := range rows {
-			for col, cell := range cells {
-				a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
-			}
-		}
-		a.updateTitle()
-	})
+	a.watchError = cache.LastError(a.currentGVR)
+	a.reloadCurrent()
 }
 
-func (a *App) updateTitle() {
-	a.mu.RLock()
-	resource := a.currentGVR.Resource
-	a.mu.RUnlock()
-	if resource == "" {
-		resource = "resources"
-	}
-	title := fmt.Sprintf(" astrotui [%s/%s] %s ", a.options.Client.Context, a.options.Client.Namespace, resource)
-	a.mu.RLock()
-	filter := a.filter
-	a.mu.RUnlock()
-	if filter != "" {
-		title += fmt.Sprintf(" filter=%q ", filter)
-	}
-	a.table.SetTitle(title)
-}
+func (a *App) updateTitle() { a.updateChrome() }
 
 func (a *App) switchResource(ctx context.Context, gvr schema.GroupVersionResource) bool {
 	renderer := rendererForGVR(gvr)
-	if renderer == nil {
+	if custom := a.renderers[gvr]; custom != nil {
+		renderer = custom
+	}
+	a.ensureScope(gvr)
+	if renderer == nil || a.cache == nil {
 		a.showMessage("Unknown resource", gvr.String())
 		return false
 	}
-	watchCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is retained to stop the active resource watcher on the next switch.
-	a.mu.Lock()
 	if a.resourceCancel != nil {
 		a.resourceCancel()
 	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
 	a.resourceCancel = cancel
+	a.generation++
+	generation := a.generation
 	a.currentGVR = gvr
-	a.renderer = renderer
+	a.marked = nil
+	a.relatedPredicate = nil
+	a.renderer = a.configuredRenderer(renderer)
 	a.objects = nil
 	a.visibleObjects = nil
 	a.filter = ""
 	a.sortCol = 0
+	for i, column := range a.renderer.Header() {
+		if column.Name == "NAME" {
+			a.sortCol = i
+			break
+		}
+	}
 	a.sortDesc = false
+	if v, ok := a.currentCustomView(gvr); ok {
+		column, direction, _ := strings.Cut(v.SortColumn, ":")
+		for i, c := range a.renderer.Header() {
+			if c.Name == strings.ToUpper(column) {
+				a.sortCol = i
+				a.sortDesc = direction == "desc"
+				break
+			}
+		}
+	}
 	cache := a.cache
-	client := a.options.Client
 	a.mu.Unlock()
-	cache.Ensure(gvr)
-	a.drawHeader(renderer)
-	events := cache.Subscribe(gvr)
+	a.loading = !cache.Ensure(gvr).HasSynced()
+	a.watchError = cache.LastError(gvr)
+	a.metricsError = nil
+	a.watchMetrics(watchCtx)
+	a.watchServerTable(watchCtx)
+	a.reloadCurrent()
+	events, unsubscribe := cache.SubscribeWithCancel(gvr)
 	go func() {
-		cache.WaitForSync(watchCtx, gvr)
-		a.refresh(cache, client, gvr, renderer)
+		defer unsubscribe()
+		// A periodic sync check handles an empty initial list (no add event).
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		dirty, synced := true, false
+		lastRefresh := time.Now()
+		var pending atomic.Bool
 		for {
 			select {
 			case <-watchCtx.Done():
 				return
 			case <-events:
-				a.refresh(cache, client, gvr, renderer)
+				dirty = true
+			case <-ticker.C:
+				nowSynced := cache.Ensure(gvr).HasSynced()
+				if time.Since(lastRefresh) > 30*time.Second {
+					dirty = true
+				}
+				if !dirty && synced == nowSynced {
+					continue
+				}
+				if !pending.CompareAndSwap(false, true) {
+					continue
+				}
+				dirty, synced = false, nowSynced
+				lastRefresh = time.Now()
+				a.queueUpdate(watchCtx, func() {
+					pending.Store(false)
+					a.applyResourceRefresh(cache, generation)
+				})
 			}
 		}
 	}()
@@ -365,33 +547,71 @@ func rendererForGVR(gvr schema.GroupVersionResource) views.Renderer {
 }
 
 func (a *App) showHelp() {
-	modal := tview.NewModal().
-		SetText(HelpText(a.actionCatalog())).
-		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(_ int, _ string) { a.app.SetRoot(a.table, true) })
-	a.app.SetRoot(modal, false)
+	view := tview.NewTextView().SetText(HelpText(a.actionCatalog()) + parityHelp()).SetScrollable(true)
+	view.SetTitle(" Help · Esc to return ").SetBorder(true)
+	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			a.showMain()
+			return nil
+		}
+		return event
+	})
+	a.app.SetRoot(view, true)
 }
 
 func (a *App) showFilter() {
-	a.mu.RLock()
-	filter := a.filter
-	a.mu.RUnlock()
-	input := tview.NewInputField().
-		SetLabel("Filter: ").
-		SetText(filter).
-		SetFieldWidth(40)
-	input.SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyEnter {
-			a.mu.Lock()
-			a.filter = input.GetText()
-			a.mu.Unlock()
-			if a.renderer != nil {
-				a.renderCurrent()
-			}
+	original := a.filter
+	filterCtx, cancel := context.WithCancel(a.backgroundContext())
+	var timer *time.Timer
+	sequence := uint64(0)
+	input := tview.NewInputField().SetLabel("/ ").SetText(original).SetFieldWidth(0)
+	feedback := tview.NewTextView().SetText("regex | !inverse | -l app=api | -f fuzzy | -t literal · Enter apply · Esc cancel")
+	input.SetChangedFunc(func(text string) {
+		if _, err := compileResourceFilter(text); err != nil {
+			feedback.SetText("Invalid filter: " + err.Error())
+			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.mu.Lock()
+		a.filter = text
+		a.mu.Unlock()
+		sequence++
+		current := sequence
+		if timer != nil {
+			timer.Stop()
+		}
+		timer = time.AfterFunc(40*time.Millisecond, func() {
+			a.queueUpdate(filterCtx, func() {
+				if sequence == current {
+					a.renderCurrent()
+				}
+			})
+		})
+		feedback.SetText("Enter apply · Esc restore previous filter")
 	})
-	a.app.SetRoot(input, true)
+	input.SetDoneFunc(func(key tcell.Key) {
+		switch key {
+		case tcell.KeyEnter:
+			if _, err := compileResourceFilter(input.GetText()); err != nil {
+				return
+			}
+			a.renderCurrent()
+		case tcell.KeyEsc:
+			a.mu.Lock()
+			a.filter = original
+			a.mu.Unlock()
+			a.renderCurrent()
+		default:
+			return
+		}
+		cancel()
+		if timer != nil {
+			timer.Stop()
+		}
+		a.showMain()
+	})
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.root, 0, 1, false).AddItem(feedback, 1, 0, false).AddItem(input, 1, 0, true)
+	a.app.SetRoot(layout, true).SetFocus(input)
 }
 
 func (a *App) showCommand(ctx context.Context) {
@@ -400,27 +620,48 @@ func (a *App) showCommand(ctx context.Context) {
 		SetFieldWidth(40)
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
+			if a.specialCommand(input.GetText()) {
+				return
+			}
 			command, ok := parseCommand(input.GetText())
 			if !ok {
 				a.showMessage("Unknown command", ":"+input.GetText())
 				return
 			}
 			switch command.Kind {
+			case "access":
+				a.showAccessReview()
+				return
+			case "diagnose":
+				a.showStorageDiagnostics()
+				return
+			case "refresh":
+				a.refreshDiscovery()
 			case "resource":
-				gvr, ok := resourceCommand(command.Value)
-				if !ok {
-					a.showMessage("Unknown command", ":"+input.GetText())
+				a.executeConfiguredCommand(command.Value)
+				return
+			case "namespace":
+				if command.Value == "" {
+					a.showNamespacePicker()
 					return
 				}
-				a.switchResource(ctx, gvr)
-			case "namespace":
 				a.switchNamespace(command.Value)
+			case "context":
+				if command.Value == "" {
+					a.showContextPicker(ctx)
+					return
+				}
+				a.switchContext(ctx, command.Value)
+				return
+			case "quit":
+				a.app.Stop()
+				return
 			case "port-forward-manager":
 				a.showPortForwardManager()
 				return
 			}
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	a.app.SetRoot(input, true)
 }
@@ -433,11 +674,21 @@ func (a *App) switchNamespace(namespace string) {
 	if a.options.Client == nil {
 		a.options.Client = &cluster.Client{}
 	}
+	if namespace == "all" || namespace == "*" {
+		namespace = ""
+	}
 	a.options.Client.Namespace = namespace
-	a.renderCurrent()
+	if a.cacheCancel != nil {
+		a.switchResource(a.backgroundContext(), a.currentGVR)
+	} else {
+		a.reloadCurrent()
+	}
 }
 
 func (a *App) switchContext(ctx context.Context, contextName string) bool {
+	return a.switchContextAfter(ctx, contextName, nil)
+}
+func (a *App) switchContextAfter(ctx context.Context, contextName string, after func()) bool {
 	contextName = strings.TrimSpace(contextName)
 	if contextName == "" {
 		return false
@@ -446,29 +697,65 @@ func (a *App) switchContext(ctx context.Context, contextName string) bool {
 	if a.options.Client != nil {
 		namespace = a.options.Client.Namespace
 	}
-	client, err := a.clientFactory()(ctx, cluster.ClientOptions{Context: contextName, Namespace: namespace})
-	if err != nil {
-		a.showMessage("Context switch failed", err.Error())
-		return false
-	}
-	newCache := cluster.NewResourceCache(client.Dynamic, 30*time.Minute)
-	newCache.Start(ctx)
-	a.mu.Lock()
-	if a.resourceCancel != nil {
-		a.resourceCancel()
-		a.resourceCancel = nil
-	}
-	a.options.Client = client
-	a.cache = newCache
-	gvr := a.currentGVR
-	a.mu.Unlock()
-	if gvr.Resource == "" {
-		gvr = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
-	}
-	if !a.switchResource(ctx, gvr) {
-		return false
-	}
-	a.app.SetRoot(a.table, true)
+	factory := a.clientFactory()
+	a.operation("Switch context", func(workCtx context.Context) (func(), error) {
+		client, err := factory(workCtx, cluster.ClientOptions{Context: contextName, Namespace: namespace})
+		if err != nil {
+			return nil, err
+		}
+		if namespace == "" {
+			client.Namespace = ""
+		}
+		return func() {
+			if a.cacheCancel != nil {
+				a.cacheCancel()
+			}
+			if a.resourceCancel != nil {
+				a.resourceCancel()
+			}
+			if a.options.PortForwards != nil {
+				for _, forward := range a.options.PortForwards.List() {
+					a.options.PortForwards.Kill(forward.ID)
+				}
+			}
+			a.options.Client = client
+			contextName, clusterName := a.contextNames()
+			if cfg, err := config.ApplyContext(a.customDir(), clusterName, contextName, a.baseConfig); err == nil {
+				a.options.Config = cfg
+				if ns := cfg.Contexts[contextName].Namespace; ns != "" {
+					client.Namespace = ns
+					if ns == "all" || ns == "*" {
+						client.Namespace = ""
+					}
+				}
+			} else {
+				a.options.Config = a.baseConfig
+				a.customError = err
+			}
+			a.applySkinUpdate(a.options.Skin)
+			a.custom = config.Custom{}
+			a.viewAlias = ""
+			a.watchCustom(a.backgroundContext())
+			a.catalog = nil
+			a.namespaceCatalog = nil
+			a.renderers = nil
+			a.cacheScope = namespaceFor(client, a.currentGVR)
+			a.cache = cluster.NewScopedResourceCache(client.Dynamic, 30*time.Minute, a.cacheScope)
+			cacheCtx, cancel := context.WithCancel(a.backgroundContext())
+			a.cacheCancel = cancel
+			a.cache.Start(cacheCtx)
+			gvr := a.currentGVR
+			if gvr.Resource == "" {
+				gvr = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+			}
+			a.switchResource(a.backgroundContext(), gvr)
+			a.refreshDiscovery()
+			a.showMain()
+			if after != nil {
+				after()
+			}
+		}, nil
+	})
 	return true
 }
 
@@ -480,10 +767,22 @@ func (a *App) clientFactory() func(context.Context, cluster.ClientOptions) (*clu
 }
 
 func resolveSkin(options Options) uitheme.Skin {
+	if options.Client != nil {
+		if c, ok := options.Config.Contexts[options.Client.Context]; ok && c.Theme != "" {
+			if skin, ok := uitheme.Defaults()[c.Theme]; ok {
+				return skin
+			}
+		}
+	}
 	if options.Skin.Name != "" {
 		return options.Skin
 	}
 	name := options.Config.Theme
+	if options.Client != nil {
+		if c, ok := options.Config.Contexts[options.Client.Context]; ok && c.Theme != "" {
+			name = c.Theme
+		}
+	}
 	if name == "" {
 		name = "dark"
 	}
@@ -515,7 +814,19 @@ func (a *App) showDelete() {
 		a.showTypedDelete(req)
 		return
 	}
-	a.confirmDelete(req, "")
+	if err := safety.Authorize(a.options.Config, a.options.Client.Context, safety.Delete, ""); err != nil {
+		a.showMessage("Delete unavailable", err.Error())
+		return
+	}
+	modal := tview.NewModal().SetText(fmt.Sprintf("Delete %s/%s in %s on %s?", req.Kind, req.ResourceName, req.Namespace, a.options.Client.Context)).
+		AddButtons([]string{"Cancel", "Delete"}).SetDoneFunc(func(index int, _ string) {
+		if index == 1 {
+			a.confirmDelete(req, "")
+			return
+		}
+		a.showMain()
+	})
+	a.app.SetRoot(modal, false)
 }
 
 func (a *App) showEdit() {
@@ -533,7 +844,7 @@ func (a *App) showEdit() {
 				a.confirmEdit(obj, input.GetText())
 				return
 			}
-			a.app.SetRoot(a.table, true)
+			a.showMain()
 		})
 		a.app.SetRoot(input, true)
 		return
@@ -590,7 +901,7 @@ func (a *App) showTypedDelete(req actions.Request) {
 			a.confirmDelete(req, input.GetText())
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	a.app.SetRoot(input, true)
 }
@@ -623,7 +934,7 @@ func (a *App) showScale() {
 			a.runAction(req, "Scaled", "Scale failed")
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	a.app.SetRoot(input, true)
 }
@@ -646,11 +957,11 @@ func (a *App) showRestart() {
 }
 
 func scalableKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet"
+	return kind == "Deployment" || kind == "StatefulSet" || kind == "ReplicaSet"
 }
 
 func restartableKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet"
+	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet"
 }
 
 func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitle, failureTitle string) {
@@ -663,7 +974,7 @@ func (a *App) showTypedAction(req actions.Request, verb safety.Verb, successTitl
 			a.runAction(req, successTitle, failureTitle)
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	a.app.SetRoot(input, true)
 }
@@ -675,19 +986,24 @@ func (a *App) runAction(req actions.Request, successTitle, failureTitle string) 
 		Config:         a.options.Config,
 		CurrentContext: a.options.Client.Context,
 	}
-	result, err := executor.Run(context.Background(), req)
-	if err != nil {
-		a.showMessage(failureTitle, err.Error())
-		return
+	timeout := 30 * time.Second
+	if req.Name == "drain" {
+		timeout = 10 * time.Minute
 	}
-	a.showMessage(successTitle, result.Message)
+	a.operationWithTimeout(successTitle, timeout, func(ctx context.Context) (func(), error) {
+		result, err := executor.Run(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return func() { a.showMessage(successTitle, result.Message) }, nil
+	})
 }
 
 func (a *App) showMessage(title, body string) {
 	modal := tview.NewModal().
-		SetText(body).
+		SetText(tview.Escape(body)).
 		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(_ int, _ string) { a.app.SetRoot(a.table, true) })
+		SetDoneFunc(func(_ int, _ string) { a.showMain() })
 	modal.SetTitle(" " + title + " ")
 	a.app.SetRoot(modal, false)
 }
@@ -720,25 +1036,81 @@ func (a *App) setSort(col int) {
 	a.renderCurrent()
 }
 
+func (a *App) reloadCurrent() {
+	a.renderCache = nil
+	if a.cache != nil && a.renderer != nil {
+		items, err := a.cache.List(a.currentGVR, a.resourceNamespace(a.currentGVR), labels.Everything())
+		if err != nil {
+			a.watchError = err
+		} else {
+			a.mu.Lock()
+			a.objects = items
+			a.mu.Unlock()
+		}
+	}
+	a.renderCurrent()
+}
+
 func (a *App) renderCurrent() {
 	if a.renderer == nil {
+		a.updateTitle()
 		return
 	}
+	selected := a.selectedObject()
+	oldRow, _ := a.table.GetSelection()
 	a.mu.RLock()
 	objects := append([]*unstructured.Unstructured(nil), a.objects...)
 	filter, sortCol, sortDesc := a.filter, a.sortCol, a.sortDesc
 	a.mu.RUnlock()
-	rows, visible := buildRows(a.renderer, objects, filter, sortCol, sortDesc)
+	if a.relatedPredicate != nil {
+		filtered := objects[:0]
+		for _, obj := range objects {
+			if a.relatedPredicate(obj) {
+				filtered = append(filtered, obj)
+			}
+		}
+		objects = filtered
+	}
+	if a.renderCache == nil {
+		a.renderCache = map[*unstructured.Unstructured][]views.Cell{}
+	}
+	rows, visible := buildRows(cachedRenderer{Renderer: a.renderer, rows: a.renderCache}, objects, filter, sortCol, sortDesc)
+	a.table.Clear()
+	a.drawHeader(a.renderer)
+	columns := a.displayColumns(a.renderer)
+	headers := a.renderer.Header()
+	for row, cells := range rows {
+		for col, index := range columns {
+			if index >= len(cells) {
+				continue
+			}
+			cell := tview.NewTableCell(tview.Escape(cells[index].Text)).SetTextColor(skinColor(a.skin.FG, tcell.ColorWhite)).SetMaxWidth(48)
+			if headers[index].AlignRight {
+				cell.SetAlign(tview.AlignRight)
+			}
+			if headers[index].Name == "STATUS" {
+				cell.SetTextColor(a.stateColor(cells[index].Text))
+			}
+			if _, marked := a.marked[visible[row].GetUID()]; marked {
+				cell.SetAttributes(tcell.AttrBold)
+				if col == 0 {
+					cell.SetText("* " + tview.Escape(cells[index].Text))
+				}
+			}
+			a.table.SetCell(row+1, col, cell)
+		}
+	}
 	a.mu.Lock()
 	a.visibleObjects = visible
 	a.mu.Unlock()
-	a.table.Clear()
-	a.drawHeader(a.renderer)
-	for row, cells := range rows {
-		for col, cell := range cells {
-			a.table.SetCell(row+1, col, tview.NewTableCell(cell.Text))
+	row := min(max(oldRow, 1), len(visible))
+	for i, obj := range visible {
+		if sameObject(selected, obj) {
+			row = i + 1
+			break
 		}
 	}
+	a.table.Select(row, 0)
 	a.updateTitle()
 }
 
@@ -754,14 +1126,14 @@ func (a *App) showDetailFor(obj *unstructured.Unstructured) {
 	view := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
-		SetText(detail.Body)
+		SetText(tview.Escape(detail.Body))
 	view.SetTitle(" " + detail.Title + " ").SetBorder(true)
 	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			a.showMain()
 			return nil
 		}
-		if event.Key() == tcell.KeyCtrlE || event.Rune() == 'a' {
+		if event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyRune && event.Rune() == 'a' {
 			a.showManifestAI(view, detail.Body)
 			return nil
 		}
@@ -775,13 +1147,8 @@ func (a *App) namespaceNames() []string {
 	if a.options.Client != nil && a.options.Client.Namespace != "" {
 		names[a.options.Client.Namespace] = struct{}{}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-	defer cancel()
-	discovered, err := cluster.ListNamespaces(ctx, a.options.Client)
-	if err == nil {
-		for _, name := range discovered {
-			names[name] = struct{}{}
-		}
+	for _, name := range a.namespaceCatalog {
+		names[name] = struct{}{}
 	}
 	out := make([]string, 0, len(names))
 	for name := range names {
@@ -808,7 +1175,8 @@ func HelpText(catalog []actions.Action) string {
 	}
 	lines = append(lines, "Ctrl+P  palette - Search resources, actions, contexts, namespaces, plugins")
 	lines = append(lines, ":  command - Switch resource view (for example :pods, :deployments, :services)")
-	lines = append(lines, "/  filter - Filter visible rows")
+	lines = append(lines, "/  filter - Regex; !inverse; -l labels; -f fuzzy; -t literal")
+	lines = append(lines, "Esc  clear filter / return", "j/k or arrows  move; PgUp/PgDn  page; Home/End  jump", "0  all namespaces; :ns  namespace picker; :ctx  context picker", "w  compact/wide columns; d / enter / y  details; Ctrl+D  confirm delete", "q / :q / Ctrl+C  quit")
 	lines = append(lines, "Shift+1..9  sort - Sort by column")
 	lines = append(lines, "?  help - Show this overlay")
 	return strings.Join(lines, "\n")
@@ -828,6 +1196,7 @@ func actionRequest(name string, gvr schema.GroupVersionResource, obj *unstructur
 		Kind:         kind,
 		Namespace:    obj.GetNamespace(),
 		ResourceName: obj.GetName(),
+		UID:          obj.GetUID(),
 		GVR:          gvr,
 	}
 }
@@ -850,22 +1219,35 @@ func BuildRows(renderer views.Renderer, objects []*unstructured.Unstructured, fi
 		obj *unstructured.Unstructured
 	}
 	pairs := make([]rowObject, 0, len(objects))
-	query := strings.ToLower(strings.TrimSpace(filter))
+	match, err := compileResourceFilter(filter)
+	if err != nil {
+		return nil, nil
+	}
 	for _, obj := range objects {
 		row := renderer.Row(obj)
-		if query != "" && !rowMatches(row, query) {
+		if !match(row, obj) {
 			continue
 		}
 		pairs = append(pairs, rowObject{row: row, obj: obj})
 	}
-	sort.SliceStable(pairs, func(i, j int) bool {
-		if sortCol >= len(pairs[i].row) || sortCol >= len(pairs[j].row) {
-			return false
+	headers := renderer.Header()
+	sort.Slice(pairs, func(i, j int) bool {
+		cmp := 0
+		if sortCol >= 0 && sortCol < len(pairs[i].row) && sortCol < len(pairs[j].row) {
+			column := views.Column{}
+			if sortCol < len(headers) {
+				column = headers[sortCol]
+			}
+			cmp = compareColumnCells(column, pairs[i].row[sortCol].Text, pairs[j].row[sortCol].Text, pairs[i].obj, pairs[j].obj)
+		}
+		if cmp == 0 {
+			l, r := pairs[i].obj, pairs[j].obj
+			cmp = strings.Compare(l.GetNamespace()+"/"+l.GetName()+"/"+string(l.GetUID()), r.GetNamespace()+"/"+r.GetName()+"/"+string(r.GetUID()))
 		}
 		if sortDesc {
-			return pairs[i].row[sortCol].Text > pairs[j].row[sortCol].Text
+			return cmp > 0
 		}
-		return pairs[i].row[sortCol].Text < pairs[j].row[sortCol].Text
+		return cmp < 0
 	})
 	rows := make([][]views.Cell, len(pairs))
 	visible := make([]*unstructured.Unstructured, len(pairs))
@@ -907,5 +1289,17 @@ func pluginPaths(paths []string) []string {
 	return []string{
 		filepath.Join(config.DefaultK9sDir(), "plugins.yaml"),
 		filepath.Join(config.DefaultDir(), "plugins.yaml"),
+		filepath.Join(config.DefaultK9sDir(), "plugins"),
+		filepath.Join(config.DefaultDir(), "plugins"),
 	}
+}
+
+// SetScreen supplies a terminal or simulation before Run and applies terminal policy.
+func (a *App) SetScreen(screen tcell.Screen) *App {
+	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
+		screen = monochromeScreen{Screen: screen, background: skinColor(a.skin.BG, tcell.ColorBlack)}
+	}
+	a.screen = screen
+	a.app.SetScreen(screen)
+	return a
 }

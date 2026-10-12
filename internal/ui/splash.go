@@ -33,7 +33,7 @@ func (a *App) showSplash(ctx context.Context) {
 	go func() {
 		select {
 		case <-time.After(splashDuration):
-			a.app.QueueUpdateDraw(dismiss)
+			a.queueUpdate(ctx, dismiss)
 		case <-ctx.Done():
 		}
 	}()
@@ -44,7 +44,7 @@ func (a *App) showSplash(ctx context.Context) {
 func (a *App) splashDismisser() func() {
 	var once sync.Once
 	return func() {
-		once.Do(func() { a.app.SetRoot(a.table, true).SetFocus(a.table) })
+		once.Do(func() { a.showMain() })
 	}
 }
 
@@ -53,19 +53,14 @@ func (a *App) splashText() string {
 	fg := tagColor(a.skin.FG, "white")
 	subtle := tagColor(a.skin.Subtle, "gray")
 	version := strings.TrimSpace(a.options.Version)
-	tagline := "by AlphaBravo"
-	if version != "" {
-		tagline = fmt.Sprintf("by AlphaBravo · %s", version)
-	}
 	lines := []string{
 		"",
 		"",
-		fmt.Sprintf("[%s::b]✦  a s t r o t u i  ✦[-:-:-]", accent),
-		fmt.Sprintf("[%s]────────────────────────────[-:-:-]", subtle),
-		fmt.Sprintf("[%s::b]Astronomer TUI[-:-:-]", fg),
-		fmt.Sprintf("[%s]A Kubernetes terminal UI[-:-:-]", subtle),
+		fmt.Sprintf("[%s::b]%s[-:-:-]", accent, astroLogo),
+		fmt.Sprintf("[%s]by AlphaBravo[-:-:-]", fg),
 		"",
-		fmt.Sprintf("[%s]%s[-:-:-]", subtle, tagline),
+		fmt.Sprintf("[%s]Astro-TUI · A Kubernetes terminal UI[-:-:-]", fg),
+		fmt.Sprintf("[%s]%s[-:-:-]", subtle, tview.Escape(version)),
 		"",
 		fmt.Sprintf("[%s]press any key to continue[-:-:-]", subtle),
 	}

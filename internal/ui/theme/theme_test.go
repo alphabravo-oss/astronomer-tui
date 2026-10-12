@@ -64,3 +64,13 @@ func TestLoadCustomSkin(t *testing.T) {
 		t.Fatalf("unexpected skin %#v", skin)
 	}
 }
+
+func TestEmptySkinDoesNotReplaceCurrentTheme(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "skin.yaml")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path, "dark"); err == nil {
+		t.Fatal("empty in-progress rewrite accepted as a skin")
+	}
+}

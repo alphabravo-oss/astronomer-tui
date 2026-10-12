@@ -3,10 +3,12 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sigs.k8s.io/yaml"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -76,12 +78,41 @@ func EditResource(ctx context.Context, client dynamic.Interface, gvr schema.Grou
 	if err != nil {
 		return nil, err
 	}
+	var editedObject unstructured.Unstructured
+	if err := yaml.Unmarshal(edited, &editedObject.Object); err != nil {
+		return nil, err
+	}
+	if editedObject.GetName() != obj.GetName() || editedObject.GetNamespace() != obj.GetNamespace() || editedObject.GetKind() != obj.GetKind() || editedObject.GetAPIVersion() != obj.GetAPIVersion() {
+		return nil, fmt.Errorf("editing resource identity is not supported")
+	}
+	// The original version is a precondition, never an editable user override.
+	editedObject.SetResourceVersion(obj.GetResourceVersion())
+	edited, err = yaml.Marshal(editedObject.Object)
+	if err != nil {
+		return nil, err
+	}
 	patch, err := StrategicMergePatch(original, edited)
 	if err != nil {
 		return nil, err
 	}
 	if len(patch) == 0 {
 		return obj, nil
+	}
+	if obj.GetResourceVersion() != "" {
+		var fields map[string]any
+		if err := json.Unmarshal(patch, &fields); err != nil {
+			return nil, err
+		}
+		metadata, _ := fields["metadata"].(map[string]any)
+		if metadata == nil {
+			metadata = map[string]any{}
+			fields["metadata"] = metadata
+		}
+		metadata["resourceVersion"] = obj.GetResourceVersion()
+		patch, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
 	}
 	updated, err := PatchResource(ctx, client, gvr, obj.GetNamespace(), obj.GetName(), patch)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,7 +30,7 @@ func CatalogFor(kind string) []Action {
 	common := []Action{
 		{Name: "describe", Key: "enter", Description: "Open resource details"},
 		{Name: "edit", Key: "e", Description: "Edit YAML in $EDITOR", Destructive: true},
-		{Name: "delete", Key: "d", Description: "Delete selected resource", Destructive: true},
+		{Name: "delete", Key: "Ctrl+D", Description: "Confirm deletion of selected resource", Destructive: true},
 	}
 	switch kind {
 	case "Deployment", "StatefulSet":
@@ -38,6 +39,16 @@ func CatalogFor(kind string) []Action {
 			Action{Name: "restart", Key: "r", Description: "Restart workload", Destructive: true},
 			Action{Name: "logs", Key: "l", Description: "Open merged workload logs"},
 		)
+	case "DaemonSet":
+		return append(common, Action{Name: "restart", Key: "r", Description: "Restart DaemonSet", Destructive: true}, Action{Name: "logs", Key: "l", Description: "Workload logs"})
+	case "ReplicaSet":
+		return append(common, Action{Name: "scale", Key: "s", Description: "Scale replicas", Destructive: true}, Action{Name: "logs", Key: "l", Description: "Workload logs"})
+	case "CronJob":
+		return append(common, Action{Name: "trigger-job", Description: "Create a Job now", Destructive: true}, Action{Name: "suspend", Description: "Suspend scheduled Jobs", Destructive: true}, Action{Name: "resume", Description: "Resume scheduling", Destructive: true})
+	case "Job":
+		return append(common, Action{Name: "suspend", Description: "Suspend Job", Destructive: true}, Action{Name: "resume", Description: "Resume Job", Destructive: true}, Action{Name: "logs", Key: "l", Description: "Job logs"})
+	case "Node":
+		return append(common, Action{Name: "cordon", Description: "Prevent new scheduling", Destructive: true}, Action{Name: "uncordon", Description: "Allow scheduling", Destructive: true}, Action{Name: "drain", Description: "Cordon and evict managed pods, respecting disruption budgets", Destructive: true})
 	case "Pod":
 		return append(common,
 			Action{Name: "exec", Key: "x", Description: "Exec into pod", Destructive: true},
@@ -96,11 +107,26 @@ func StatefulSetRestartAnnotation(s appsv1.StatefulSet) string {
 }
 
 func DeleteResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) error {
+	return deleteResource(ctx, client, gvr, namespace, name, "")
+}
+
+func deleteResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, uid types.UID) error {
+	return deleteResourceOptions(ctx, client, gvr, namespace, name, uid, false)
+}
+func deleteResourceOptions(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string, uid types.UID, force bool) error {
+	options := metav1.DeleteOptions{}
+	if force {
+		zero := int64(0)
+		options.GracePeriodSeconds = &zero
+	}
+	if uid != "" {
+		options.Preconditions = &metav1.Preconditions{UID: &uid}
+	}
 	resource := client.Resource(gvr)
 	if namespace != "" {
-		return resource.Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+		return resource.Namespace(namespace).Delete(ctx, name, options)
 	}
-	return resource.Delete(ctx, name, metav1.DeleteOptions{})
+	return resource.Delete(ctx, name, options)
 }
 
 func YAMLForEdit(obj *unstructured.Unstructured) ([]byte, error) {
@@ -153,6 +179,11 @@ func strategicMergePatch(originalJSON, editedJSON []byte) ([]byte, error) {
 
 func diffMap(original, edited map[string]any) map[string]any {
 	patch := map[string]any{}
+	for key := range original {
+		if _, exists := edited[key]; !exists {
+			patch[key] = nil
+		}
+	}
 	for key, editedValue := range edited {
 		originalValue, ok := original[key]
 		if !ok {
@@ -168,7 +199,7 @@ func diffMap(original, edited map[string]any) map[string]any {
 			}
 			continue
 		}
-		if fmt.Sprint(originalValue) != fmt.Sprint(editedValue) {
+		if !reflect.DeepEqual(originalValue, editedValue) {
 			patch[key] = editedValue
 		}
 	}

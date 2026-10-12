@@ -54,11 +54,13 @@ func (m MockProvider) Stream(ctx context.Context, req Request) (<-chan Chunk, er
 		defer close(ch)
 		resp, err := m.Complete(ctx, req)
 		if err != nil {
-			ch <- Chunk{Err: err, Done: true}
+			sendChunk(ctx, ch, Chunk{Err: err, Done: true})
 			return
 		}
-		ch <- Chunk{Text: resp.Text}
-		ch <- Chunk{Done: true}
+		if !sendChunk(ctx, ch, Chunk{Text: resp.Text}) {
+			return
+		}
+		sendChunk(ctx, ch, Chunk{Done: true})
 	}()
 	return ch, nil
 }
@@ -125,8 +127,11 @@ func (h HTTPProvider) ollamaStream(ctx context.Context, req Request) (<-chan Chu
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:11434/api/generate"
 	}
-	body := map[string]any{"model": h.Model, "prompt": req.System + "\n\n" + req.Prompt, "stream": true}
+	body := map[string]any{"model": h.Model, "prompt": req.System + "\n\n" + promptWithContext(req), "stream": true}
 	return h.streamJSONLines(ctx, endpoint, "", body, func(data []byte) Chunk {
+		if err := streamError(data); err != nil {
+			return Chunk{Err: err, Done: true}
+		}
 		var decoded struct {
 			Response string `json:"response"`
 			Done     bool   `json:"done"`
@@ -239,15 +244,16 @@ func (h HTTPProvider) streamHTTPResponse(req *http.Request, decode func([]byte) 
 		defer close(ch)
 		resp, err := h.httpClient().Do(req) // #nosec G704 -- LLM endpoints are explicit user configuration or provider defaults.
 		if err != nil {
-			ch <- Chunk{Err: err, Done: true}
+			sendChunk(req.Context(), ch, Chunk{Err: err, Done: true})
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
 		if err := checkStatus(resp); err != nil {
-			ch <- Chunk{Err: err, Done: true}
+			sendChunk(req.Context(), ch, Chunk{Err: err, Done: true})
 			return
 		}
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 4096), 1024*1024)
 		for scanner.Scan() {
 			line := bytes.TrimSpace(scanner.Bytes())
 			if len(line) == 0 {
@@ -255,22 +261,27 @@ func (h HTTPProvider) streamHTTPResponse(req *http.Request, decode func([]byte) 
 			}
 			chunk := decode(line)
 			if chunk.Text != "" || chunk.Err != nil || chunk.Done {
-				ch <- chunk
+				if !sendChunk(req.Context(), ch, chunk) {
+					return
+				}
 			}
 			if chunk.Err != nil || chunk.Done {
 				return
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			ch <- Chunk{Err: err, Done: true}
+			sendChunk(req.Context(), ch, Chunk{Err: err, Done: true})
 			return
 		}
-		ch <- Chunk{Done: true}
+		sendChunk(req.Context(), ch, Chunk{Done: true})
 	}()
 	return ch
 }
 
 func openAIStreamChunk(data []byte) Chunk {
+	if err := streamError(data); err != nil {
+		return Chunk{Err: err, Done: true}
+	}
 	var decoded struct {
 		Choices []struct {
 			Delta struct {
@@ -289,6 +300,9 @@ func openAIStreamChunk(data []byte) Chunk {
 }
 
 func anthropicStreamChunk(data []byte) Chunk {
+	if err := streamError(data); err != nil {
+		return Chunk{Err: err, Done: true}
+	}
 	var decoded struct {
 		Type  string `json:"type"`
 		Delta struct {
@@ -310,7 +324,7 @@ func (h HTTPProvider) ollama(ctx context.Context, req Request) (Response, error)
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
-	body := map[string]any{"model": h.Model, "prompt": req.System + "\n\n" + req.Prompt, "stream": false}
+	body := map[string]any{"model": h.Model, "prompt": req.System + "\n\n" + promptWithContext(req), "stream": false}
 	data, _ := json.Marshal(body)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
@@ -328,7 +342,7 @@ func (h HTTPProvider) ollama(ctx context.Context, req Request) (Response, error)
 	var decoded struct {
 		Response string `json:"response"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&decoded); err != nil {
 		return Response{}, err
 	}
 	return Response{Text: decoded.Response}, nil
@@ -406,7 +420,7 @@ func (h HTTPProvider) anthropic(ctx context.Context, req Request) (Response, err
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&decoded); err != nil {
 		return Response{}, err
 	}
 	var parts []string
@@ -450,7 +464,7 @@ func (h HTTPProvider) postJSON(ctx context.Context, endpoint, _ string, authHead
 	if err := checkStatus(resp); err != nil {
 		return err
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(out)
 }
 
 func (h HTTPProvider) apiKey() (string, error) {
@@ -525,4 +539,34 @@ func defaultAPIKeyEnv(provider string) string {
 	default:
 		return ""
 	}
+}
+
+func sendChunk(ctx context.Context, ch chan<- Chunk, chunk Chunk) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- chunk:
+		return true
+	}
+}
+
+func streamError(data []byte) error {
+	var event struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(data, &event) != nil || len(event.Error) == 0 || string(event.Error) == "null" {
+		return nil
+	}
+	var message string
+	if json.Unmarshal(event.Error, &message) == nil {
+		return fmt.Errorf("provider: %s", message)
+	}
+	var detail struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(event.Error, &detail)
+	if detail.Message == "" {
+		detail.Message = "stream returned an error"
+	}
+	return fmt.Errorf("provider: %s", detail.Message)
 }

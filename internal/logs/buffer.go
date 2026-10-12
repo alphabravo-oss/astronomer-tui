@@ -3,6 +3,7 @@ package logs
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
 	"os"
 	"regexp"
 	"sort"
@@ -12,17 +13,23 @@ import (
 )
 
 type Entry struct {
-	Time  time.Time
-	Pod   string
-	Line  string
-	Parse ParsedLine
-	Color int
+	PodUID    types.UID
+	ID        uint64
+	Namespace string
+	Container string
+	Time      time.Time
+	Pod       string
+	Line      string
+	Parse     ParsedLine
+	Color     int
 }
 
 type Buffer struct {
-	mu      sync.RWMutex
-	limit   int
-	entries []Entry
+	mu       sync.RWMutex
+	limit    int
+	next     int
+	sequence uint64
+	entries  []Entry
 }
 
 func NewBuffer(limit int) *Buffer {
@@ -33,11 +40,17 @@ func NewBuffer(limit int) *Buffer {
 }
 
 func (b *Buffer) Append(pod, line string, ts time.Time) {
+	b.AppendSource(PodLogTarget{Pod: pod}, line, ts)
+}
+
+func (b *Buffer) AppendSource(target PodLogTarget, line string, ts time.Time) {
+	pod := target.Pod
 	if ts.IsZero() {
 		ts = time.Now()
 	}
 	entry := Entry{
-		Time:  ts,
+		Time:      ts,
+		Namespace: target.Namespace, Container: target.Container, PodUID: target.PodUID,
 		Pod:   pod,
 		Line:  line,
 		Parse: ParseLine(line),
@@ -45,20 +58,25 @@ func (b *Buffer) Append(pod, line string, ts time.Time) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.entries = append(b.entries, entry)
-	if overflow := len(b.entries) - b.limit; overflow > 0 {
-		copy(b.entries, b.entries[overflow:])
-		b.entries = b.entries[:b.limit]
+	b.sequence++
+	entry.ID = b.sequence
+	if len(b.entries) < b.limit {
+		b.entries = append(b.entries, entry)
+	} else {
+		b.entries[b.next] = entry
+		b.next = (b.next + 1) % b.limit
 	}
 }
 
 func (b *Buffer) Entries() []Entry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	out := append([]Entry(nil), b.entries...)
+	out := make([]Entry, 0, len(b.entries))
+	out = append(out, b.entries[b.next:]...)
+	out = append(out, b.entries[:b.next]...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Time.Equal(out[j].Time) {
-			return out[i].Pod < out[j].Pod
+			return out[i].Source() < out[j].Source()
 		}
 		return out[i].Time.Before(out[j].Time)
 	})
@@ -116,10 +134,21 @@ func (b *Buffer) Save(path, filterExpr string) error {
 func FormatEntry(entry Entry, prefixPod bool) string {
 	line := entry.Line
 	if prefixPod && entry.Pod != "" {
-		line = PrefixPod(entry.Pod, line)
+		line = PrefixPod(entry.Source(), line)
 	}
 	if !entry.Time.IsZero() {
 		return fmt.Sprintf("%s %s", entry.Time.Format(time.RFC3339), line)
 	}
 	return line
+}
+
+func (e Entry) Source() string {
+	s := e.Pod
+	if e.Namespace != "" {
+		s = e.Namespace + "/" + s
+	}
+	if e.Container != "" {
+		s += "/" + e.Container
+	}
+	return s
 }

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -75,5 +76,33 @@ func TestResourceCacheStartsInformerCreatedAfterStart(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].GetName() != "api" {
 		t.Fatalf("unexpected list %#v", items)
+	}
+}
+
+func TestSubscriptionCancellationAndWatchError(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	cache := NewResourceCache(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), 0)
+	ch, cancel := cache.SubscribeWithCancel(gvr)
+	failure := fmt.Errorf("forbidden: pods")
+	cache.publish(gvr, Event{Err: failure})
+	if event := <-ch; event.Err != failure || cache.LastError(gvr) != failure {
+		t.Fatal("watch failure not exposed")
+	}
+	cancel()
+	cancel()
+	cache.mu.RLock()
+	count := len(cache.subs[gvr])
+	cache.mu.RUnlock()
+	if count != 0 {
+		t.Fatal("abandoned subscription retained")
+	}
+	cache.publish(gvr, Event{Type: EventAdded})
+	select {
+	case <-ch:
+		t.Fatal("cancelled subscriber still receives events")
+	default:
+	}
+	if cache.LastError(gvr) != nil {
+		t.Fatal("successful event did not clear error")
 	}
 }

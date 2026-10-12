@@ -2,6 +2,8 @@ package logs
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,7 +28,7 @@ func TestContainerSelectionAndTargets(t *testing.T) {
 		t.Fatal("expected picker hint for multi-container pod")
 	}
 	targets := TargetsForPods([]corev1.Pod{pod})
-	if len(targets) != 1 || targets[0].Container != "init" {
+	if len(targets) != 1 || targets[0].Container != "app" {
 		t.Fatalf("unexpected targets %#v", targets)
 	}
 }
@@ -42,5 +44,13 @@ func TestPodsForSelector(t *testing.T) {
 	}
 	if len(pods) != 1 || pods[0].Name != "api" {
 		t.Fatalf("unexpected pods %#v", pods)
+	}
+}
+
+func TestStreamRejectsReplacedPod(t *testing.T) {
+	client := kubefake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", UID: "new"}})
+	err := StreamPodLogs(context.Background(), client, PodLogTarget{Namespace: "default", Pod: "api", PodUID: "old"}, RequestOptions{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "replaced") {
+		t.Fatalf("expected identity rejection, got %v", err)
 	}
 }

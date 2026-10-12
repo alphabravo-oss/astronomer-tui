@@ -1,0 +1,32 @@
+{
+  "no_color": false,
+  "binary_sha256": "239d5996131ab272ea8fa021294f0d464b8ce3c395d3a91b3dbf896d2f0760be",
+  "product": "k9s",
+  "binary": "/tmp/astrotui-comparison/k9s",
+  "count": 1000,
+  "terminal": [
+    80,
+    24
+  ],
+  "first_useful_frame_ms": 1735.39,
+  "initial_screen": " Context: kind-astrotui-quality [R]                <0\u2026 ____  __ ________        \n Cluster: kind-astrotui-quality                    <1>|    |/  /   __   \\______ \n User:    kind-astrotui-quality                    <2>|       /\\____    /  ___/ \n K9s Rev: v0.50.18 \u26a1v0.51.0                          |    \\   \\  /    /\\___  \\ \n K8s Rev: v1.32.2                                     |____|\\__ \\/____//____  / \n CPU:     2%                                                   \\/           \\/  \n MEM:     3%                                                                    \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 pods(astrotui-bench)[1,000] \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 NAME\u2191        PF READY STATUS   RESTARTS CPU %CPU/R %CPU/L MEM %MEM/R %MEM/L  \u2502\n\u2502 bench-00000  \u25cf  0/1   Pending         0   0    n/a    n/a   0    n/a    n/a  \u2502\n\u2502 bench-00001  \u25cf  0/1   Pending         0   0.18                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                ",
+  "nondefault_color_cells": 1920,
+  "filter_latency_ms": [
+    127.80166696757078,
+    134.89598920568824,
+    126.5501631423831,
+    131.51768129318953,
+    115.75568141415715,
+    110.76549114659429,
+    117.30497609823942,
+    112.0339478366077,
+    106.3458938151598,
+    144.75100301206112
+  ],
+  "filter_p95_ms": 144.75,
+  "idle_seconds": 0,
+  "idle_cpu_seconds": 0.0,
+  "rss_before": 145141760,
+  "rss_after": 145141760,
+  "rss_peak": 145141760
+}

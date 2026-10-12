@@ -28,7 +28,7 @@ func (a *App) showExecPlan() {
 				a.confirmExecPlan(input.GetText())
 				return
 			}
-			a.app.SetRoot(a.table, true)
+			a.showMain()
 		})
 		a.app.SetRoot(input, true)
 		return
@@ -119,8 +119,8 @@ func (a *App) showExecContainerPicker(confirmText string, pod corev1.Pod) {
 	}
 	list.SetTitle(" Select container ").SetBorder(true)
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q' {
+			a.showMain()
 			return nil
 		}
 		return event

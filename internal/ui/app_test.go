@@ -160,8 +160,8 @@ func TestParseNamespaceCommand(t *testing.T) {
 	if !ok || cmd.Kind != "port-forward-manager" {
 		t.Fatalf("unexpected command %#v %v", cmd, ok)
 	}
-	if _, ok := parseCommand(":namespace"); ok {
-		t.Fatal("namespace command should require a value")
+	if cmd, ok := parseCommand(":namespace"); !ok || cmd.Kind != "namespace" {
+		t.Fatal("namespace command should open a picker")
 	}
 }
 
@@ -314,6 +314,7 @@ func TestPaletteEntriesIncludeDiscoveredNamespaces(t *testing.T) {
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
 		),
 	}})
+	app.namespaceCatalog = []string{"default", "kube-system"}
 	entries := app.paletteEntries()
 	for _, want := range []string{"namespace:default", "namespace:kube-system"} {
 		var found bool
@@ -338,23 +339,33 @@ func TestExecutePaletteContextEntryRebuildsClient(t *testing.T) {
 			return &cluster.Client{
 				Context:   opts.Context,
 				Namespace: opts.Namespace,
-				Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+				Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), podObject("api", "kube-system")),
 			}, nil
 		},
 	})
+	oldCacheStopped := false
+	app.cacheCancel = func() { oldCacheStopped = true }
 	app.currentGVR = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
-	if !app.executePaletteEntry(palette.Entry{ID: "context:prod", Title: "prod", Category: palette.Contexts}) {
-		t.Fatal("expected context entry execution")
+	screen := startQualityScreen(t, app, 120, 24)
+	app.app.QueueUpdateDraw(func() {
+		if !app.executePaletteEntry(palette.Entry{ID: "context:prod", Title: "prod", Category: palette.Contexts}) {
+			t.Error("expected context execution")
+		}
+	})
+	if !waitForScreenText(t, app, screen, "Context: prod") {
+		t.Fatal("context did not switch")
 	}
-	if got.Context != "prod" || got.Namespace != "kube-system" {
-		t.Fatalf("unexpected client factory options %#v", got)
-	}
-	if app.options.Client.Context != "prod" || app.options.Client.Namespace != "kube-system" {
-		t.Fatalf("unexpected client %#v", app.options.Client)
-	}
-	if app.cache == nil {
-		t.Fatal("expected cache rebuild")
-	}
+	app.app.QueueUpdate(func() {
+		if !oldCacheStopped {
+			t.Error("previous cache was not cancelled")
+		}
+		if got.Context != "prod" || got.Namespace != "kube-system" {
+			t.Errorf("unexpected factory options %#v", got)
+		}
+		if app.cache == nil {
+			t.Error("cache not rebuilt")
+		}
+	})
 }
 
 func TestExecutePaletteActionEntry(t *testing.T) {
@@ -609,7 +620,7 @@ func TestLogLineWriterAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := renderLogEntries(buffer.Entries(), true)
-	if !strings.Contains(rendered, "[api] first") || !strings.Contains(rendered, "[api] second") {
+	if !strings.Contains(rendered, "[api[] first") || !strings.Contains(rendered, "[api[] second") {
 		t.Fatalf("unexpected rendered logs %q", rendered)
 	}
 	if !strings.Contains(rendered, "[-]") {
@@ -845,13 +856,12 @@ func TestSwitchResourceAppliesCacheUpdates(t *testing.T) {
 	if !app.switchResource(ctx, gvr) {
 		t.Fatal("expected resource switch")
 	}
-	waitForVisibleNames(t, app, []string{"api"})
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {
 		t.Fatal(err)
 	}
 	defer screen.Fini()
-	app.app.SetScreen(screen)
+	app.SetScreen(screen)
 	app.app.SetRoot(app.table, true)
 	done := make(chan error, 1)
 	go func() { done <- app.app.Run() }()
@@ -866,6 +876,7 @@ func TestSwitchResourceAppliesCacheUpdates(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("watch did not start")
 	}
+	waitForVisibleNames(t, app, []string{"api"})
 	events := app.cache.Subscribe(gvr)
 	watcher.Add(podObject("worker", "default"))
 	select {

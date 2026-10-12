@@ -1,0 +1,32 @@
+{
+  "no_color": false,
+  "binary_sha256": "239d5996131ab272ea8fa021294f0d464b8ce3c395d3a91b3dbf896d2f0760be",
+  "product": "k9s",
+  "binary": "/tmp/astrotui-comparison/k9s",
+  "count": 1000,
+  "terminal": [
+    120,
+    40
+  ],
+  "first_useful_frame_ms": 1770.19,
+  "initial_screen": " Context: kind-astrotui-quality [R]                <0> all              <d>       Describe     ____  __ ________        \n Cluster: kind-astrotui-quality                    <1> astrotui-bench   <?>       Help        |    |/  /   __   \\______ \n User:    kind-astrotui-quality                    <2> default          <shift-j> Jump Owner  |       /\\____    /  ___/ \n K9s Rev: v0.50.18 \u26a1v0.51.0                                            <l>       Logs        |    \\   \\  /    /\\___  \\ \n K8s Rev: v1.32.2                                                       <p>       Logs Previou|____|\\__ \\/____//____  / \n CPU:     1%                                                            <shift-f> Port-Forward         \\/           \\/  \n MEM:     4%                                                                                                            \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 pods(astrotui-bench)[1,000] \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 NAME\u2191         PF  READY  STATUS       RESTARTS   CPU   %CPU/R   %CPU/L   MEM   %MEM/R   %MEM/L IP     NODE   AGE     \u2502\n\u2502 bench-00000   \u25cf   0/1    Pending             0     0      n/a      n/a     0      n/a      n/a n/a    n/a    30m     \u2502\n\u2502 bench-00001   \u25cf   0/1    Pending             0     0      n/a      n/a     0      n/a      n/a n/a    n/a    30m     \u2502\n\u2502 bench-00002   \u25cf   0/1    Pending             0     0      n/a      n/a     0      n/a      n/a n/a    n/a    30m     \u2502\n\u2502 bench-00003   \u25cf   0/1    Pending             0     0      n/a                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        ",
+  "nondefault_color_cells": 4800,
+  "filter_latency_ms": [
+    190.96928322687745,
+    162.018655333668,
+    221.14865202456713,
+    178.74769680202007,
+    181.44121393561363,
+    190.17883529886603,
+    187.6582819968462,
+    178.62274032086134,
+    182.92565690353513,
+    196.42272498458624
+  ],
+  "filter_p95_ms": 221.15,
+  "idle_seconds": 300,
+  "idle_cpu_seconds": 18.21,
+  "rss_before": 149250048,
+  "rss_after": 146612224,
+  "rss_peak": 154062848
+}

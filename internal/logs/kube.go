@@ -10,19 +10,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
 type PodLogTarget struct {
+	PodUID    types.UID
 	Namespace string
 	Pod       string
 	Container string
 }
 
 type RequestOptions struct {
-	TailLines *int64
-	Follow    bool
-	Previous  bool
+	TailLines  *int64
+	Follow     bool
+	Previous   bool
+	Timestamps bool
+	SinceTime  *metav1.Time
 }
 
 func ContainerNames(pod corev1.Pod) []string {
@@ -33,22 +37,31 @@ func ContainerNames(pod corev1.Pod) []string {
 	for _, container := range pod.Spec.Containers {
 		names = append(names, container.Name)
 	}
+	for _, container := range pod.Spec.EphemeralContainers {
+		names = append(names, container.Name)
+	}
 	return names
 }
 
 func DefaultContainer(pod corev1.Pod) (string, bool) {
-	names := ContainerNames(pod)
-	if len(names) == 0 {
-		return "", false
+	if chosen := pod.Annotations["kubectl.kubernetes.io/default-container"]; chosen != "" {
+		for _, c := range pod.Spec.Containers {
+			if c.Name == chosen {
+				return chosen, true
+			}
+		}
 	}
-	return names[0], true
+	if len(pod.Spec.Containers) > 0 {
+		return pod.Spec.Containers[0].Name, true
+	}
+	return "", false
 }
 
 func TargetsForPods(pods []corev1.Pod) []PodLogTarget {
 	targets := make([]PodLogTarget, 0, len(pods))
 	for _, pod := range pods {
 		container, _ := DefaultContainer(pod)
-		targets = append(targets, PodLogTarget{Namespace: pod.Namespace, Pod: pod.Name, Container: container})
+		targets = append(targets, PodLogTarget{Namespace: pod.Namespace, Pod: pod.Name, Container: container, PodUID: pod.UID})
 	}
 	return targets
 }
@@ -62,11 +75,21 @@ func PodsForSelector(ctx context.Context, client kubernetes.Interface, namespace
 }
 
 func StreamPodLogs(ctx context.Context, client kubernetes.Interface, target PodLogTarget, opts RequestOptions, writer io.Writer) error {
+	if target.PodUID != "" {
+		pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.Pod, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if pod.UID != target.PodUID {
+			return fmt.Errorf("pod was replaced; refresh before opening logs")
+		}
+	}
 	request := &corev1.PodLogOptions{
-		Container: target.Container,
-		Follow:    opts.Follow,
-		Previous:  opts.Previous,
-		TailLines: opts.TailLines,
+		Container:  target.Container,
+		Follow:     opts.Follow,
+		Previous:   opts.Previous,
+		TailLines:  opts.TailLines,
+		Timestamps: opts.Timestamps, SinceTime: opts.SinceTime,
 	}
 	stream, err := client.CoreV1().Pods(target.Namespace).GetLogs(target.Pod, request).Stream(ctx)
 	if err != nil {
@@ -83,4 +106,14 @@ func ContainerPickerHint(pod corev1.Pod) string {
 		return ""
 	}
 	return fmt.Sprintf("containers: %s", strings.Join(names, ", "))
+}
+
+func AllTargetsForPods(pods []corev1.Pod) []PodLogTarget {
+	var out []PodLogTarget
+	for _, p := range pods {
+		for _, c := range ContainerNames(p) {
+			out = append(out, PodLogTarget{Namespace: p.Namespace, Pod: p.Name, Container: c, PodUID: p.UID})
+		}
+	}
+	return out
 }

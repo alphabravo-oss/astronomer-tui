@@ -2,8 +2,10 @@
 package views
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"k8s.io/client-go/util/jsonpath"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +17,10 @@ import (
 )
 
 type Column struct {
-	Name string
+	Name       string
+	AlignRight bool
+	Priority   int32
+	Type       string
 }
 
 type Cell struct {
@@ -35,9 +40,10 @@ type Renderer interface {
 }
 
 type GenericRenderer struct {
-	Resource schema.GroupVersionResource
-	Columns  []string
-	Paths    map[string]string
+	Resource    schema.GroupVersionResource
+	Columns     []string
+	Paths       map[string]string
+	Definitions map[string]Column
 }
 
 func (g GenericRenderer) GVR() schema.GroupVersionResource { return g.Resource }
@@ -50,6 +56,9 @@ func (g GenericRenderer) Header() []Column {
 	out := make([]Column, len(cols))
 	for i, col := range cols {
 		out[i] = Column{Name: col}
+		if def, ok := g.Definitions[col]; ok {
+			out[i] = def
+		}
 	}
 	return out
 }
@@ -109,6 +118,10 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 		}
 	}
 	columns := []string{"NAME"}
+	if crd.Spec.Scope == apiextensionsv1.NamespaceScoped {
+		columns = []string{"NAMESPACE", "NAME"}
+	}
+	definitions := map[string]Column{}
 	paths := map[string]string{}
 	for _, item := range crd.Spec.Versions {
 		if item.Name != version {
@@ -117,6 +130,7 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 		for _, column := range item.AdditionalPrinterColumns {
 			columns = append(columns, strings.ToUpper(column.Name))
 			paths[strings.ToUpper(column.Name)] = column.JSONPath
+			definitions[strings.ToUpper(column.Name)] = Column{Name: strings.ToUpper(column.Name), Priority: column.Priority, Type: column.Type}
 		}
 		break
 	}
@@ -124,9 +138,10 @@ func RendererForCRD(crd *apiextensionsv1.CustomResourceDefinition, version strin
 		columns = append(columns, "AGE")
 	}
 	return GenericRenderer{
-		Resource: schema.GroupVersionResource{Group: crd.Spec.Group, Version: version, Resource: crd.Spec.Names.Plural},
-		Columns:  columns,
-		Paths:    paths,
+		Resource:    schema.GroupVersionResource{Group: crd.Spec.Group, Version: version, Resource: crd.Spec.Names.Plural},
+		Columns:     columns,
+		Paths:       paths,
+		Definitions: definitions,
 	}
 }
 
@@ -237,6 +252,9 @@ func inferGVR(resource string) schema.GroupVersionResource {
 func field(obj map[string]any, name string) string {
 	switch strings.ToUpper(name) {
 	case "STATUS":
+		if obj["kind"] == "Pod" {
+			return podStatus(obj)
+		}
 		if ready := nodeReadyStatus(obj); ready != "" {
 			return ready
 		}
@@ -261,6 +279,12 @@ func field(obj map[string]any, name string) string {
 		}
 	case "RESTARTS":
 		statuses, ok, _ := unstructured.NestedSlice(obj, "status", "containerStatuses")
+		init, hasInit, _ := unstructured.NestedSlice(obj, "status", "initContainerStatuses")
+		statuses = append(statuses, init...)
+		ok = ok || hasInit
+		if !ok && obj["kind"] == "Pod" {
+			return "0"
+		}
 		if ok {
 			var total int64
 			for _, item := range statuses {
@@ -497,8 +521,13 @@ func firstString(obj map[string]any, paths ...[]string) string {
 }
 
 func podReady(obj map[string]any) string {
-	statuses, ok, _ := unstructured.NestedSlice(obj, "status", "containerStatuses")
-	if !ok || len(statuses) == 0 {
+	statuses, _, _ := unstructured.NestedSlice(obj, "status", "containerStatuses")
+	containers, _, _ := unstructured.NestedSlice(obj, "spec", "containers")
+	total := len(containers)
+	if total == 0 {
+		total = len(statuses)
+	}
+	if total == 0 {
 		return ""
 	}
 	var ready int
@@ -511,7 +540,7 @@ func podReady(obj map[string]any) string {
 			ready++
 		}
 	}
-	return fmt.Sprintf("%d/%d", ready, len(statuses))
+	return fmt.Sprintf("%d/%d", ready, total)
 }
 
 func nodeReadyStatus(obj map[string]any) string {
@@ -706,42 +735,30 @@ func stringSlice(obj map[string]any, path ...string) string {
 
 func (g GenericRenderer) valueFor(u *unstructured.Unstructured, col string) string {
 	if path := g.Paths[strings.ToUpper(col)]; path != "" {
-		return jsonPathValue(u.Object, path)
+		value := jsonPathValue(u.Object, path)
+		if g.Definitions[strings.ToUpper(col)].Type == "date" {
+			if stamp, err := time.Parse(time.RFC3339Nano, value); err == nil {
+				return age(stamp)
+			}
+		}
+		return value
 	}
 	return field(u.Object, col)
 }
 
 func jsonPathValue(obj map[string]any, path string) string {
-	path = strings.TrimPrefix(path, ".")
-	path = strings.TrimPrefix(path, "{.")
-	path = strings.TrimSuffix(path, "}")
-	if path == "" {
+	if !strings.HasPrefix(path, "{") {
+		path = "{" + path + "}"
+	}
+	query := jsonpath.New("column").AllowMissingKeys(true)
+	if err := query.Parse(path); err != nil {
+		return "<invalid path>"
+	}
+	var b bytes.Buffer
+	if err := query.Execute(&b, obj); err != nil {
 		return ""
 	}
-	parts := strings.Split(path, ".")
-	var current any = obj
-	for _, part := range parts {
-		m, ok := current.(map[string]any)
-		if !ok {
-			return fmt.Sprint(current)
-		}
-		current, ok = m[part]
-		if !ok {
-			return ""
-		}
-	}
-	switch typed := current.(type) {
-	case string:
-		return typed
-	case nil:
-		return ""
-	default:
-		data, err := json.Marshal(typed)
-		if err != nil {
-			return fmt.Sprint(typed)
-		}
-		return string(data)
-	}
+	return b.String()
 }
 
 func age(t time.Time) string {
@@ -756,4 +773,38 @@ func age(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// Pod phase alone can remain Running during CrashLoopBackOff or image failures.
+func podStatus(obj map[string]any) string {
+	if value, _, _ := unstructured.NestedString(obj, "metadata", "deletionTimestamp"); value != "" {
+		return "Terminating"
+	}
+	for _, key := range []string{"initContainerStatuses", "containerStatuses"} {
+		statuses, _, _ := unstructured.NestedSlice(obj, "status", key)
+		for _, item := range statuses {
+			status, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			prefix := ""
+			if key == "initContainerStatuses" {
+				prefix = "Init:"
+			}
+			if reason, _, _ := unstructured.NestedString(status, "state", "waiting", "reason"); reason != "" {
+				return prefix + reason
+			}
+			if code, found, _ := unstructured.NestedInt64(status, "state", "terminated", "exitCode"); found && code != 0 {
+				reason, _, _ := unstructured.NestedString(status, "state", "terminated", "reason")
+				if reason == "" {
+					reason = fmt.Sprintf("ExitCode:%d", code)
+				}
+				return prefix + reason
+			}
+		}
+	}
+	if phase, _, _ := unstructured.NestedString(obj, "status", "phase"); phase != "" {
+		return phase
+	}
+	return "Unknown"
 }

@@ -27,6 +27,9 @@ func (w Watcher) Watch(ctx context.Context) <-chan Update {
 	go func() {
 		defer close(ch)
 		var lastMod time.Time
+		var lastSize int64
+		var existed bool
+		pending := false
 		emit := func() {
 			skin, err := Load(w.Path, w.Fallback)
 			select {
@@ -36,7 +39,7 @@ func (w Watcher) Watch(ctx context.Context) <-chan Update {
 		}
 		emit()
 		if info, err := os.Stat(w.Path); err == nil {
-			lastMod = info.ModTime()
+			lastMod, lastSize, existed = info.ModTime(), info.Size(), true
 		}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -46,17 +49,24 @@ func (w Watcher) Watch(ctx context.Context) <-chan Update {
 				return
 			case <-ticker.C:
 				info, err := os.Stat(w.Path)
-				if err != nil {
-					if !lastMod.IsZero() {
-						lastMod = time.Time{}
-						emit()
-					}
+				exists := err == nil
+				var mod time.Time
+				var size int64
+				if exists {
+					mod, size = info.ModTime(), info.Size()
+				}
+				if exists != existed || !mod.Equal(lastMod) || size != lastSize {
+					// Editors may truncate and rewrite in separate operations. Require a
+					// stable observation before loading, including deletion/recreation.
+					lastMod, lastSize, existed = mod, size, exists
+					pending = true
 					continue
 				}
-				if info.ModTime().After(lastMod) {
-					lastMod = info.ModTime()
+				if pending {
+					pending = false
 					emit()
 				}
+
 			}
 		}
 	}()

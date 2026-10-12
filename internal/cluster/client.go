@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
@@ -94,6 +95,9 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 			ns = "default"
 		}
 	}
+	if ns == "all" || ns == "*" {
+		ns = ""
+	}
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
@@ -102,7 +106,9 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
-	disco, err := discovery.NewDiscoveryClientForConfig(restCfg)
+	discoveryCfg := rest.CopyConfig(restCfg)
+	discoveryCfg.Timeout = 10 * time.Second
+	disco, err := discovery.NewDiscoveryClientForConfig(discoveryCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery client: %w", err)
 	}

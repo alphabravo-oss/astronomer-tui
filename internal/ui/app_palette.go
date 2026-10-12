@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"github.com/alphabravo-oss/astrotui/internal/actions"
 	"github.com/alphabravo-oss/astrotui/internal/ai"
+	"github.com/alphabravo-oss/astrotui/internal/cluster"
 	"github.com/alphabravo-oss/astrotui/internal/palette"
 	"github.com/alphabravo-oss/astrotui/internal/plugins"
+	"github.com/alphabravo-oss/astrotui/internal/safety"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
 	"sort"
 	"strings"
-	"time"
 )
 
 func (a *App) showPalette() {
@@ -46,7 +48,7 @@ func (a *App) showPalette() {
 				return
 			}
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	list.SetSelectedFunc(func(row int, _ string, _ string, _ rune) {
 		if entry, ok := entriesByRow[row]; ok {
@@ -59,8 +61,26 @@ func (a *App) showPalette() {
 		AddItem(list, 0, 1, false)
 	flex.SetTitle(" Palette ").SetBorder(true)
 	flex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
+		if event.Key() == tcell.KeyEsc {
+			a.showMain()
+			return nil
+		}
+		delta := 0
+		switch event.Key() {
+		case tcell.KeyDown, tcell.KeyCtrlN, tcell.KeyTab:
+			delta = 1
+		case tcell.KeyUp, tcell.KeyCtrlP, tcell.KeyBacktab:
+			delta = -1
+		}
+		if delta != 0 {
+			row := list.GetCurrentItem()
+			for i := 0; i < list.GetItemCount(); i++ {
+				row = (row + delta + list.GetItemCount()) % list.GetItemCount()
+				if _, ok := entriesByRow[row]; ok {
+					list.SetCurrentItem(row)
+					break
+				}
+			}
 			return nil
 		}
 		return event
@@ -85,7 +105,7 @@ func populatePaletteList(list *tview.List, matches []palette.Match, execute func
 		for _, entry := range grouped {
 			row := list.GetItemCount()
 			entry := entry
-			list.AddItem(entry.Title, entry.Description, 0, func() {
+			list.AddItem(tview.Escape(entry.Title), tview.Escape(entry.Description), 0, func() {
 				execute(entry)
 			})
 			entriesByRow[row] = entry
@@ -98,14 +118,28 @@ func populatePaletteList(list *tview.List, matches []palette.Match, execute func
 }
 
 func (a *App) executePaletteEntry(entry palette.Entry) bool {
+	if command, ok := strings.CutPrefix(entry.ID, "view:"); ok {
+		return a.specialCommand(command)
+	}
 	switch entry.Category {
 	case palette.Resources:
 		if strings.HasPrefix(entry.ID, "resource:") {
-			gvr, ok := resourceCommand(strings.TrimPrefix(entry.ID, "resource:"))
-			if !ok {
+			command := strings.TrimPrefix(strings.TrimPrefix(entry.ID, "resource:"), ":")
+			if _, exists := a.custom.Aliases[command]; exists {
+				a.executeConfiguredCommand(command)
+				return true
+			}
+			gvr, err := a.resolveResource(command)
+			if err != nil {
+				a.showMessage("Resource", err.Error())
 				return false
 			}
-			return a.switchResource(context.Background(), gvr)
+			a.viewAlias = ""
+			if !a.switchResource(a.backgroundContext(), gvr) {
+				return false
+			}
+			a.showMain()
+			return true
 		}
 		if obj, ok := entry.Payload.(*unstructured.Unstructured); ok {
 			a.showDetailFor(obj)
@@ -114,6 +148,7 @@ func (a *App) executePaletteEntry(entry palette.Entry) bool {
 	case palette.Namespaces:
 		if strings.HasPrefix(entry.ID, "namespace:") {
 			a.switchNamespace(strings.TrimPrefix(entry.ID, "namespace:"))
+			a.showMain()
 			return true
 		}
 	case palette.Contexts:
@@ -155,21 +190,17 @@ func (a *App) executeAIEntry(entry palette.Entry) bool {
 		a.showMessage("AI disabled", "Configure ai.enabled and ai.provider in ~/.config/astrotui/config.yaml")
 		return true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	resp, err := ai.NaturalLanguageAction(ctx, a.options.AIProvider, HelpText(a.actionCatalog()), intent)
-	if err != nil {
-		a.showMessage("AI failed", err.Error())
-		return true
-	}
-	if actionName, ok := parseAIActionCall(resp.Text); ok {
-		if a.actionAvailable(actionName) {
-			return a.executeActionEntry(palette.Entry{ID: "action:" + actionName, Title: actionName, Category: palette.Actions})
-		}
-		a.showMessage("AI action unavailable", fmt.Sprintf("%q is not available for the current selection", actionName))
-		return true
-	}
-	a.showMessage("AI", resp.Text)
+	provider := a.options.AIProvider
+	req := ai.Request{System: "Suggest a Kubernetes TUI action or ask a clarifying question. Never claim an action has been executed.", Prompt: HelpText(a.actionCatalog()) + "\nUser intent: " + intent}
+	a.previewAI(req, func(prepared ai.Request) {
+		a.operation("Ask AI", func(ctx context.Context) (func(), error) {
+			response, err := provider.Complete(ctx, prepared)
+			if err != nil {
+				return nil, err
+			}
+			return func() { a.showMessage("AI suggestion — review and run manually", response.Text) }, nil
+		})
+	}, a.showMain)
 	return true
 }
 
@@ -191,7 +222,9 @@ func (a *App) executeActionEntry(entry palette.Entry) bool {
 	case "port-forward":
 		a.showPortForwardPlan()
 	case "describe":
-		a.showDetail()
+		a.showDescribe()
+	case "cordon", "uncordon", "drain", "trigger-job", "suspend", "resume":
+		a.showAdministrativeAction(actionName)
 	default:
 		return false
 	}
@@ -201,6 +234,10 @@ func (a *App) executeActionEntry(entry palette.Entry) bool {
 func (a *App) executePluginEntry(entry palette.Entry) bool {
 	plugin, ok := entry.Payload.(plugins.Plugin)
 	if !ok {
+		return false
+	}
+	if a.options.Client != nil && safety.PolicyFor(a.options.Config, a.options.Client.Context) == "read-only" {
+		a.showMessage("Plugin unavailable", "External commands are disabled in read-only contexts.")
 		return false
 	}
 	plan := plugins.Plan(plugin, a.pluginVars())
@@ -221,7 +258,7 @@ func (a *App) showPluginConfirm(name string, plan plugins.CommandPlan) {
 				a.runPluginPlan(name, plan)
 				return
 			}
-			a.app.SetRoot(a.table, true)
+			a.showMain()
 		})
 	a.app.SetRoot(modal, false)
 }
@@ -232,8 +269,13 @@ func (a *App) runPluginPlan(name string, plan plugins.CommandPlan) {
 		executor = func(plan plugins.CommandPlan) error {
 			cmd := plugins.Command(plan)
 			if plan.Background {
-				return cmd.Start()
+				if err := cmd.Start(); err != nil {
+					return err
+				}
+				go func() { _ = cmd.Wait() }()
+				return nil
 			}
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			return cmd.Run()
 		}
 	}
@@ -252,9 +294,16 @@ func (a *App) runPluginPlan(name string, plan plugins.CommandPlan) {
 }
 
 func (a *App) pluginVars() map[string]string {
-	vars := map[string]string{}
+	vars := map[string]string{
+		"RESOURCE_GROUP": a.currentGVR.Group, "RESOURCE_VERSION": a.currentGVR.Version,
+		"RESOURCE_NAME": a.currentGVR.Resource, "FILTER": a.filter,
+	}
 	if a.options.Client != nil {
 		vars["CONTEXT"] = a.options.Client.Context
+		vars["KUBECONFIG"] = a.options.Client.KubeconfigPath
+		if c := a.options.Client.RawConfig.Contexts[a.options.Client.Context]; c != nil {
+			vars["CLUSTER"], vars["USER"] = c.Cluster, c.AuthInfo
+		}
 		vars["NAMESPACE"] = a.options.Client.Namespace
 	}
 	if obj := a.selectedObject(); obj != nil {
@@ -272,8 +321,20 @@ func (a *App) paletteEntries() []palette.Entry {
 	currentGVR := a.currentGVR
 	a.mu.RUnlock()
 	entries := palette.ResourceEntries(fallbackKind(currentGVR.Resource), objects)
+	for _, command := range explorerCommands {
+		entries = append(entries, palette.Entry{ID: "view:" + command, Title: ":" + command, Description: "Core explorer", Category: palette.Actions})
+	}
 	for _, alias := range ResourceAliasEntries() {
 		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: alias, Category: palette.Resources})
+	}
+	if a.catalog != nil {
+		for _, r := range a.catalog.Resources {
+			name := cluster.Qualified(r.GVR)
+			entries = append(entries, palette.Entry{ID: "resource:" + name, Title: ":" + name, Description: r.Kind + " " + strings.Join(r.ShortNames, ", "), Category: palette.Resources})
+		}
+	}
+	for alias, target := range a.custom.Aliases {
+		entries = append(entries, palette.Entry{ID: "resource:" + alias, Title: ":" + alias, Description: target, Category: palette.Resources})
 	}
 	var actionNames []string
 	for _, action := range a.actionCatalog() {
@@ -281,13 +342,21 @@ func (a *App) paletteEntries() []palette.Entry {
 	}
 	entries = append(entries, palette.ActionEntries(actionNames)...)
 	var contexts []string
-	for name := range a.options.Client.RawConfig.Contexts {
-		contexts = append(contexts, name)
+	if a.options.Client != nil {
+		for name := range a.options.Client.RawConfig.Contexts {
+			contexts = append(contexts, name)
+		}
 	}
 	sort.Strings(contexts)
 	entries = append(entries, palette.ContextEntries(contexts)...)
-	entries = append(entries, palette.NamespaceEntries(a.namespaceNames())...)
-	entries = append(entries, palette.PluginEntries(a.pluginFile)...)
+	entries = append(entries, palette.NamespaceEntries(append([]string{"all"}, a.namespaceNames()...))...)
+	scoped := plugins.File{Plugins: map[string]plugins.Plugin{}}
+	for name, p := range a.pluginFile.Plugins {
+		if a.pluginInScope(p) {
+			scoped.Plugins[name] = p
+		}
+	}
+	entries = append(entries, palette.PluginEntries(scoped)...)
 	return entries
 }
 

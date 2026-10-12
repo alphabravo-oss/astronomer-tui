@@ -430,3 +430,46 @@ func clusterScopedSnapshotResource(resource string) bool {
 		return false
 	}
 }
+
+func TestPodStatusShowsContainerFailuresAndTermination(t *testing.T) {
+	for _, tc := range []struct {
+		state map[string]any
+		want  string
+	}{
+		{map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}}, "CrashLoopBackOff"},
+		{map[string]any{"terminated": map[string]any{"reason": "OOMKilled", "exitCode": int64(137)}}, "OOMKilled"},
+		{map[string]any{"running": map[string]any{}}, "Running"},
+	} {
+		obj := map[string]any{"kind": "Pod", "status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{"state": tc.state}}}}
+		if got := field(obj, "STATUS"); got != tc.want {
+			t.Errorf("got %s want %s", got, tc.want)
+		}
+		obj["metadata"] = map[string]any{"deletionTimestamp": "2026-10-12T12:00:00Z"}
+		if got := field(obj, "STATUS"); got != "Terminating" {
+			t.Errorf("deleted pod status %s", got)
+		}
+	}
+}
+
+func TestJSONPathArrayEscapingAndMissingField(t *testing.T) {
+	obj := map[string]any{"metadata": map[string]any{"labels": map[string]any{"app.example.io/name": "worker"}}, "spec": map[string]any{"containers": []any{map[string]any{"name": "one"}, map[string]any{"name": "two"}}}}
+	for path, want := range map[string]string{`.metadata.labels.app\.example\.io/name`: "worker", `.spec.containers[*].name`: "one two", `.spec.missing`: ""} {
+		if got := jsonPathValue(obj, path); got != want {
+			t.Fatalf("%s got %q want %q", path, got, want)
+		}
+	}
+}
+
+func TestPendingPodHasExplicitReadinessAndRestarts(t *testing.T) {
+	obj := map[string]any{"kind": "Pod", "spec": map[string]any{"containers": []any{map[string]any{"name": "one"}, map[string]any{"name": "two"}}}, "status": map[string]any{"containerStatuses": []any{map[string]any{"name": "one", "ready": true, "restartCount": int64(2)}}}}
+	if got := podReady(obj); got != "1/2" {
+		t.Fatal(got)
+	}
+	delete(obj, "status")
+	if got := podReady(obj); got != "0/2" {
+		t.Fatal(got)
+	}
+	if got := field(obj, "RESTARTS"); got != "0" {
+		t.Fatal(got)
+	}
+}

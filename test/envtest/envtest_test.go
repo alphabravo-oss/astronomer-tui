@@ -126,10 +126,10 @@ func TestEnvtestCRDInstancesAppearInDynamicView(t *testing.T) {
 	renderer := views.RendererForCRD(crd, "v1")
 	headers := renderer.Header()
 	row := renderer.Row(listed[0])
-	if len(headers) != 2 || headers[0].Name != "NAME" || headers[1].Name != "SIZE" {
+	if len(headers) != 3 || headers[0].Name != "NAMESPACE" || headers[1].Name != "NAME" || headers[2].Name != "SIZE" {
 		t.Fatalf("unexpected CRD headers %#v", headers)
 	}
-	if row[0].Text != "first" || row[1].Text != "large" {
+	if row[1].Text != "first" || row[2].Text != "large" {
 		t.Fatalf("unexpected CRD row %#v", row)
 	}
 }

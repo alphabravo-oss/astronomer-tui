@@ -30,22 +30,21 @@ func (a *App) showFailureAI() {
 		a.showMessage("AI explain failure unavailable", fmt.Sprintf("pod/%s is not currently failing", pod.Name))
 		return
 	}
-	spec, status, events, err := a.podFailureContext(context.Background(), pod)
-	if err != nil {
-		a.showMessage("AI failed", err.Error())
-		return
-	}
-	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetText("Asking AI...")
-	view.SetTitle(" AI failure analysis ").SetBorder(true)
-	view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			a.app.SetRoot(a.table, true)
-			return nil
+	client := a.options.Client
+	a.operation("Prepare failure analysis", func(ctx context.Context) (func(), error) {
+		// A private helper captures the client so context changes cannot retarget it.
+		worker := &App{options: Options{Client: client}}
+		spec, status, events, err := worker.podFailureContext(ctx, pod)
+		if err != nil {
+			return nil, err
 		}
-		return event
+		return func() {
+			view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
+			view.SetTitle(" AI failure analysis · Esc back ").SetBorder(true)
+			view.SetInputCapture(a.backCapture())
+			a.streamAIResponse(view, ai.FailureRequest(spec, status, events))
+		}, nil
 	})
-	a.app.SetRoot(view, true)
-	a.streamAIResponse(view, ai.FailureRequest(spec, status, events))
 }
 
 func (a *App) podFailureContext(ctx context.Context, pod corev1.Pod) (string, string, string, error) {
@@ -65,7 +64,7 @@ func (a *App) podEventSummary(ctx context.Context, pod corev1.Pod) string {
 		return "No recent events available."
 	}
 	selector := fields.AndSelectors(
-		fields.OneTermEqualSelector("involvedObject.name", pod.Name),
+		fields.OneTermEqualSelector("involvedObject.uid", string(pod.UID)),
 		fields.OneTermEqualSelector("involvedObject.kind", "Pod"),
 	)
 	list, err := a.options.Client.Clientset.CoreV1().Events(pod.Namespace).List(ctx, metav1.ListOptions{FieldSelector: selector.String()})
@@ -111,26 +110,49 @@ func (a *App) showManifestAI(view *tview.TextView, manifest string) {
 }
 
 func (a *App) streamAIResponse(view *tview.TextView, req ai.Request) {
+	a.previewAI(req, func(prepared ai.Request) { a.app.SetRoot(view, true); a.sendAIResponse(view, prepared) }, func() { a.app.SetRoot(view, true) })
+}
+
+func (a *App) sendAIResponse(view *tview.TextView, req ai.Request) {
 	view.SetText("Asking AI...")
+	if a.aiCancel != nil {
+		a.aiCancel()
+	}
+	ctx, cancel := context.WithTimeout(a.backgroundContext(), 30*time.Second)
+	a.aiCancel = cancel
+	oldCapture := view.GetInputCapture()
+	view.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyEsc || e.Key() == tcell.KeyRune && e.Rune() == 'q' {
+			cancel()
+		}
+		if oldCapture != nil {
+			return oldCapture(e)
+		}
+		return e
+	})
+	provider := a.options.AIProvider
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		chunks, err := a.options.AIProvider.Stream(ctx, req)
+		chunks, err := provider.Stream(ctx, req)
 		if err != nil {
-			a.app.QueueUpdateDraw(func() { view.SetText("AI failed: " + err.Error()) })
+			a.queueUpdate(a.backgroundContext(), func() { view.SetText("AI failed: " + err.Error()) })
 			return
 		}
 		var b strings.Builder
 		for chunk := range chunks {
 			if chunk.Err != nil {
 				errText := chunk.Err.Error()
-				a.app.QueueUpdateDraw(func() { view.SetText("AI failed: " + errText) })
+				a.queueUpdate(a.backgroundContext(), func() { view.SetText("AI failed: " + errText) })
 				return
 			}
 			if chunk.Text != "" {
+				if b.Len()+len(chunk.Text) > 1024*1024 {
+					a.queueUpdate(a.backgroundContext(), func() { view.SetText("AI response exceeded 1 MiB") })
+					return
+				}
 				b.WriteString(chunk.Text)
 				text := b.String()
-				a.app.QueueUpdateDraw(func() { view.SetText(text) })
+				a.queueUpdate(a.backgroundContext(), func() { view.SetText(tview.Escape(text)) })
 			}
 			if chunk.Done {
 				return

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -46,8 +47,13 @@ func run(args []string) int {
 
 	fs := flag.NewFlagSet("astrotui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	readOnly := fs.Bool("readonly", false, "Disable all mutation commands in every context")
+	startupCommand := fs.String("command", "", "Initial resource or explorer command")
+	configDir := fs.String("config-dir", config.DefaultDir(), "Configuration and session directory")
 	contextName := fs.String("context", "", "Kubernetes context to use")
+	fs.StringVar(startupCommand, "c", "", "Initial resource or explorer command")
 	namespace := fs.String("namespace", "", "Kubernetes namespace to use")
+	fs.StringVar(namespace, "n", "", "Kubernetes namespace to use")
 	noRestore := fs.Bool("no-restore", false, "Skip restoring previous session state")
 	printVersion := fs.Bool("version", false, "Print version and exit")
 	headless := fs.Bool("headless", false, "Validate configuration and Kubernetes connectivity without starting the TUI")
@@ -62,13 +68,14 @@ func run(args []string) int {
 		return 0
 	}
 
-	cfg, err := config.Load(config.DefaultPath())
+	cfg, err := config.Load(filepath.Join(*configDir, "config.yaml"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		return exConfig
 	}
 
-	stateStore := session.NewStore(session.DefaultPath())
+	cfg.ReadOnly = cfg.ReadOnly || *readOnly
+	stateStore := session.NewStore(filepath.Join(*configDir, "state.json"))
 	var restored session.State
 	if !*noRestore {
 		if loaded, err := stateStore.Load(); err == nil {
@@ -89,6 +96,21 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return exUsage
 	}
+	if selected := kube.RawConfig.Contexts[kube.Context]; selected != nil {
+		scoped, overlayErr := config.ApplyContext(*configDir, selected.Cluster, kube.Context, cfg)
+		if overlayErr != nil {
+			fmt.Fprintf(os.Stderr, "context configuration error: %v\n", overlayErr)
+			return exConfig
+		}
+		if *namespace == "" {
+			if ns := scoped.Contexts[kube.Context].Namespace; ns != "" {
+				kube.Namespace = ns
+				if ns == "all" {
+					kube.Namespace = ""
+				}
+			}
+		}
+	}
 	if *headless {
 		namespaces, listErr := kube.Clientset.CoreV1().Namespaces().List(setupCtx, cluster.ListOptions())
 		if listErr != nil {
@@ -102,7 +124,7 @@ func run(args []string) int {
 		return runHeadlessRender(setupCtx, kube, *headlessRenderMinRows, *headlessRenderIdle, started)
 	}
 
-	skin, err := theme.Load(theme.DefaultPath(), cfg.Theme)
+	skin, err := theme.Load(filepath.Join(*configDir, "skin.yaml"), cfg.Theme)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "skin error: %v\n", err)
 		return exConfig
@@ -114,13 +136,19 @@ func run(args []string) int {
 	}
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
+	var pluginPaths []string
+	if *configDir != config.DefaultDir() {
+		pluginPaths = []string{filepath.Join(*configDir, "plugins.yaml"), filepath.Join(*configDir, "plugins")}
+	}
 	app := ui.New(ui.Options{
+		ReadOnly: *readOnly, StartupCommand: *startupCommand,
+		ConfigDir: *configDir, PluginPaths: pluginPaths,
 		Client:       kube,
 		Config:       cfg,
 		SessionStore: stateStore,
 		InitialState: restored,
 		Skin:         skin,
-		SkinUpdates:  theme.Watcher{Path: theme.DefaultPath(), Fallback: cfg.Theme}.Watch(appCtx),
+		SkinUpdates:  theme.Watcher{Path: filepath.Join(*configDir, "skin.yaml"), Fallback: cfg.Theme}.Watch(appCtx),
 		AIProvider:   aiProvider,
 		Version:      version,
 	})
@@ -215,7 +243,11 @@ func runImportK9s(args []string) int {
 		return exConfig
 	}
 	for _, result := range results {
-		fmt.Printf("%s: %s\n", result.File, result.Status)
+		fmt.Printf("%s: %s", result.File, result.Status)
+		if result.Note != "" {
+			fmt.Printf(" (%s)", result.Note)
+		}
+		fmt.Println()
 	}
 	return 0
 }

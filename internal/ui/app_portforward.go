@@ -36,7 +36,7 @@ func (a *App) showPortForwardPlan() {
 			a.startPortForwardSpec(updated)
 			return
 		}
-		a.app.SetRoot(a.table, true)
+		a.showMain()
 	})
 	a.app.SetRoot(input, true)
 }
@@ -75,12 +75,15 @@ func parsePortForwardSpec(input string, base actions.PortForwardSpec) (actions.P
 		return actions.PortForwardSpec{}, fmt.Errorf("expected local:remote ports")
 	}
 	local, err := strconv.Atoi(parts[0])
-	if err != nil || local <= 0 {
-		return actions.PortForwardSpec{}, fmt.Errorf("local port must be a positive integer")
+	if err != nil || local <= 0 || local > 65535 {
+		return actions.PortForwardSpec{}, fmt.Errorf("local port must be between 1 and 65535")
 	}
 	remote, err := strconv.Atoi(parts[1])
-	if err != nil || remote <= 0 {
-		return actions.PortForwardSpec{}, fmt.Errorf("remote port must be a positive integer")
+	if err != nil || remote <= 0 || remote > 65535 {
+		return actions.PortForwardSpec{}, fmt.Errorf("remote port must be between 1 and 65535")
+	}
+	if remote != base.Remote {
+		base.TargetPortName = ""
 	}
 	base.Local = local
 	base.Remote = remote
@@ -93,25 +96,35 @@ func (a *App) startPortForwardSpec(spec actions.PortForwardSpec) {
 		manager = actions.NewPortForwardManager()
 		a.options.PortForwards = manager
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(a.backgroundContext())
 	a.mu.RLock()
 	client := a.options.Client
 	a.mu.RUnlock()
+	if err := manager.TryAdd(actions.NewPortForward(spec, cancel)); err != nil {
+		cancel()
+		a.showMessage("Port-forward unavailable", err.Error())
+		return
+	}
 	go a.runPortForward(ctx, client, spec)
-	manager.Add(actions.NewPortForward(spec, cancel))
-	a.showMessage("Port-forward", fmt.Sprintf("%s %d:%d", spec.Resource, spec.Local, spec.Remote))
+	a.showMessage("Port-forward connecting", fmt.Sprintf("%s %d:%d · :pf shows readiness and errors", spec.Resource, spec.Local, spec.Remote))
 }
 
 func (a *App) runPortForward(ctx context.Context, client *cluster.Client, spec actions.PortForwardSpec) {
+	manager := a.options.PortForwards
+	var err error
 	if a.options.PortForwardRun != nil {
-		_ = a.options.PortForwardRun(ctx, spec)
-		return
+		err = a.options.PortForwardRun(ctx, spec)
+	} else if client == nil || client.Config == nil || client.Clientset == nil {
+		err = fmt.Errorf("Kubernetes connection is unavailable")
+	} else {
+		err = actions.RunPortForwardReady(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard, func() { manager.SetStatus(spec.ID(), "ready") })
 	}
-	if client == nil || client.Config == nil || client.Clientset == nil {
-		<-ctx.Done()
-		return
+	if err != nil && ctx.Err() == nil {
+		manager.SetStatus(spec.ID(), "failed: "+err.Error())
+	} else {
+		manager.SetStatus(spec.ID(), "stopped")
 	}
-	_ = actions.RunPortForward(ctx, client.Config, client.Clientset, spec, io.Discard, io.Discard)
+
 }
 
 func (a *App) showPortForwardManager() {
@@ -121,14 +134,43 @@ func (a *App) showPortForwardManager() {
 		a.options.PortForwards = manager
 	}
 	table := tview.NewTable().SetSelectable(true, false)
-	table.SetTitle(" Port-forwards ").SetBorder(true)
+	table.SetTitle(" Port-forwards · b benchmark · Esc back ").SetBorder(true)
 	renderPortForwardRows(table, manager.List())
+	ctx, cancel := context.WithCancel(a.backgroundContext())
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				a.queueUpdate(ctx, func() { renderPortForwardRows(table, manager.List()) })
+			}
+		}
+	}()
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc || event.Rune() == 'q':
-			a.app.SetRoot(a.table, true)
+		case event.Key() == tcell.KeyRune && event.Rune() == 'b':
+			forwards := manager.List()
+			id := portForwardIDAt(table, forwards)
+			for _, forward := range forwards {
+				if forward.ID == id {
+					if forward.Status != "ready" {
+						a.showMessage("Benchmark unavailable", "Wait for the forward to be ready")
+					} else {
+						a.showBenchmark(fmt.Sprintf("http://127.0.0.1:%d/", forward.Local))
+					}
+					cancel()
+					return nil
+				}
+			}
 			return nil
-		case event.Key() == tcell.KeyCtrlK || event.Rune() == 'k' || event.Rune() == 'd':
+		case event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyRune && event.Rune() == 'q':
+			cancel()
+			a.showMain()
+			return nil
+		case event.Key() == tcell.KeyCtrlK || event.Key() == tcell.KeyRune && event.Rune() == 'k' || event.Key() == tcell.KeyRune && event.Rune() == 'd':
 			if killSelectedPortForward(table, manager) {
 				renderPortForwardRows(table, manager.List())
 			}
@@ -141,7 +183,7 @@ func (a *App) showPortForwardManager() {
 
 func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {
 	table.Clear()
-	headers := []string{"ID", "NAMESPACE", "RESOURCE", "LOCAL", "REMOTE", "SINCE"}
+	headers := []string{"ID", "NAMESPACE", "RESOURCE", "LOCAL", "REMOTE", "SINCE", "STATUS"}
 	for col, header := range headers {
 		table.SetCell(0, col, tview.NewTableCell(header).SetTextColor(tcell.ColorAqua).SetSelectable(false))
 	}
@@ -154,6 +196,7 @@ func renderPortForwardRows(table *tview.Table, forwards []actions.PortForward) {
 			fmt.Sprint(forward.Local),
 			fmt.Sprint(forward.Remote),
 			time.Since(forward.Since).Round(time.Second).String(),
+			forward.Status,
 		}
 		for col, value := range values {
 			table.SetCell(row+1, col, tview.NewTableCell(value))

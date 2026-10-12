@@ -66,12 +66,16 @@ func TestImportK9s(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"config.yaml", "skin.yaml", "hotkeys.yaml", "aliases.yaml"}
+	wantOrder := []string{"config.yaml", "skin.yaml", "hotkeys.yaml", "aliases.yaml", "views.yaml", "plugins.yaml"}
 	if len(results) != len(wantOrder) {
 		t.Fatalf("unexpected results %#v", results)
 	}
 	for i, want := range wantOrder {
-		if results[i] != (ImportResult{File: want, Status: "imported"}) {
+		status := "imported"
+		if i >= 4 {
+			status = "skipped"
+		}
+		if results[i].File != want || results[i].Status != status {
 			t.Fatalf("result %d got %#v", i, results[i])
 		}
 	}

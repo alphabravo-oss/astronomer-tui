@@ -32,7 +32,7 @@ bench-palette:
 	go test -bench=. ./internal/palette
 
 e2e:
-	go test -tags=e2e ./test/kind/... -skip TestHeadlessRenderProcessGoldenPath
+	go test -tags=e2e ./test/kind/... ./internal/ui/... -skip TestHeadlessRenderProcessGoldenPath
 
 e2e-actions:
 	go test -tags=e2e ./test/kind/... -run Actions
@@ -45,7 +45,7 @@ perf:
 
 coverage-nfr:
 	@for pkg in ./internal/cluster ./internal/actions ./internal/logs; do \
-		out=$$(go test -cover "$$pkg"); \
+		out=$$(go test -cover "$$pkg") || { echo "$$out"; exit 1; }; \
 		echo "$$out"; \
 		pct=$$(echo "$$out" | sed -n 's/.*coverage: \([0-9.]*\)%.*/\1/p'); \
 		awk -v p="$$pct" 'BEGIN { if (p < 70) exit 1 }' || { echo "$$pkg coverage $$pct% is below 70%"; exit 1; }; \
