@@ -42,13 +42,14 @@ func TestResourceCacheListAndSubscribe(t *testing.T) {
 	if len(items) != 1 || items[0].GetName() != "api" {
 		t.Fatalf("unexpected list %#v", items)
 	}
+	// Store sync precedes asynchronous listener delivery; wait for the event.
 	select {
 	case event := <-events:
 		if event.Type != EventAdded || event.Object.GetName() != "api" {
 			t.Fatalf("unexpected event %#v", event)
 		}
-	default:
-		t.Fatal("expected add event")
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for asynchronous add-event delivery")
 	}
 }
 
