@@ -284,6 +284,7 @@ func buildPerfBinary(t *testing.T) string {
 	out := filepath.Join(t.TempDir(), "astrotui")
 	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", out, "./cmd/astrotui") // #nosec G204 -- perf harness runs a fixed go build command.
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0") // Match the shipped static binaries.
 	data, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build failed: %v\n%s", err, data)

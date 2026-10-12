@@ -99,3 +99,22 @@ func TestImportK9s(t *testing.T) {
 		t.Fatalf("expected skin conflict, got %#v", third)
 	}
 }
+
+func TestYAMLPositionDecimalPrefixes(t *testing.T) {
+	for _, tc := range []struct {
+		message      string
+		line, column int
+	}{
+		{"yaml: line 12: unknown field", 12, 1},
+		{"yaml: line 7, column 19: invalid token", 7, 19},
+		{"yaml: line 2, column invalid", 2, 1},
+		{"yaml: line nope: invalid token", 0, 0},
+		{"yaml: line 99999999999999999999999: overflow", 0, 0},
+		{"no position available", 0, 0},
+	} {
+		line, col := parseYAMLPosition(tc.message)
+		if line != tc.line || col != tc.column {
+			t.Fatalf("%q: got %d:%d, want %d:%d", tc.message, line, col, tc.line, tc.column)
+		}
+	}
+}

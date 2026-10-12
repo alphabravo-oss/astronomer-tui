@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -144,13 +145,25 @@ func parseYAMLPosition(msg string) (int, int) {
 		return 0, 0
 	}
 	rest := msg[idx+len("line "):]
-	var line int
-	if _, err := fmt.Sscanf(rest, "%d", &line); err != nil {
+	line, err := positionNumber(rest)
+	if err != nil {
 		return 0, 0
 	}
 	col := 1
 	if colIdx := strings.Index(rest, "column "); colIdx >= 0 {
-		_, _ = fmt.Sscanf(rest[colIdx+len("column "):], "%d", &col)
+		if parsed, err := positionNumber(rest[colIdx+len("column "):]); err == nil {
+			col = parsed
+		}
 	}
 	return line, col
+}
+
+// YAML positions are decimal prefixes; avoid the general-purpose fmt scanner.
+func positionNumber(text string) (int, error) {
+	text = strings.TrimSpace(text)
+	end := strings.IndexFunc(text, func(r rune) bool { return r < '0' || r > '9' })
+	if end >= 0 {
+		text = text[:end]
+	}
+	return strconv.Atoi(text)
 }
